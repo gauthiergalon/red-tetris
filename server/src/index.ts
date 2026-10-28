@@ -3,7 +3,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express, { type Express, type Request, type Response } from 'express';
 import { Server } from 'socket.io';
-import { PIECES, createInitialState, checkCollision, rotatePiece, removePiece, placePiece, clearLines } from './game.js';
+import {
+  PIECES,
+  GRID_COLS,
+  GRID_ROWS,
+  createInitialState,
+  checkCollision,
+  rotatePiece,
+  removePiece,
+  placePiece,
+  clearLines,
+} from './game.js';
 import type { GameState } from './game.js';
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -26,57 +36,64 @@ function emitState() {
   io.emit('gameState', gameState);
 }
 
+function spawnPiece(): GameState | null {
+  const randomIndex = Math.floor(Math.random() * PIECES.length);
+  const newPiece = PIECES[randomIndex];
+  const newPos = { x: Math.floor((GRID_COLS - newPiece[0].length) / 2), y: 0 };
+
+  if (checkCollision(newPiece, newPos, gameState.grid)) {
+    return { ...gameState, playing: false, spawning: false };
+  }
+
+  const grid = placePiece(gameState.grid, newPiece, newPos);
+  return {
+    ...gameState,
+    spawning: false,
+    piece: newPiece,
+    pos: newPos,
+    grid,
+  };
+}
+
+function processDrop(): GameState | null {
+  if (!gameState.playing || gameState.spawning || !gameState.piece) return null;
+
+  const piece = gameState.piece;
+  const pos = gameState.pos;
+  const nextPos = { x: pos.x, y: pos.y + 1 };
+  const cleanGrid = removePiece(gameState.grid, piece, pos);
+
+  if (checkCollision(piece, nextPos, cleanGrid)) {
+    const grid = placePiece(cleanGrid, piece, pos);
+    const { grid: clearedGrid, linesCleared } = clearLines(grid);
+    return {
+      ...gameState,
+      spawning: true,
+      grid: clearedGrid,
+      score: gameState.score + linesCleared * 100,
+    };
+  }
+
+  const grid = placePiece(cleanGrid, piece, nextPos);
+  return {
+    ...gameState,
+    grid,
+    pos: nextPos,
+  };
+}
+
 function tick() {
   if (!gameState.playing) return;
 
   if (gameState.spawning) {
-    const randomIndex = Math.floor(Math.random() * PIECES.length);
-    const newPiece = PIECES[randomIndex];
-    const newPos = { x: Math.floor((10 - newPiece[0].length) / 2), y: 0 };
-
-    if (checkCollision(newPiece, newPos, gameState.grid)) {
-      gameState = { ...gameState, playing: false, spawning: false };
+    const spawned = spawnPiece();
+    if (spawned) {
+      gameState = spawned;
     }
-
-    else {
-      let grid = placePiece(gameState.grid, newPiece, newPos);
-
-      gameState = {
-        ...gameState,
-        spawning: false,
-        piece: newPiece,
-        pos: newPos,
-        grid,
-      };
-    }
-  }
-
-  else {
-    const piece = gameState.piece;
-    const pos = gameState.pos;
-
-    if (!piece) return;
-
-    const nextPos = { x: pos.x, y: pos.y + 1 };
-    const cleanGrid = removePiece(gameState.grid, piece, pos);
-
-    if (checkCollision(piece, nextPos, cleanGrid)) {
-      let grid = placePiece(cleanGrid, piece, pos);
-      const { grid: clearedGrid, linesCleared } = clearLines(grid);
-      gameState = {
-        ...gameState,
-        spawning: true,
-        grid: clearedGrid,
-        score: gameState.score + linesCleared * 100,
-      };
-    }
-    else {
-      let grid = placePiece(cleanGrid, piece, nextPos);
-      gameState = {
-        ...gameState,
-        grid,
-        pos: nextPos,
-      };
+  } else {
+    const dropped = processDrop();
+    if (dropped) {
+      gameState = dropped;
     }
   }
 
@@ -90,7 +107,7 @@ io.on('connection', (socket) => {
   socket.on('start', () => {
     const randomIndex = Math.floor(Math.random() * PIECES.length);
     const newPiece = PIECES[randomIndex];
-    const newPos = { x: Math.floor((10 - newPiece[0].length) / 2), y: 0 };
+    const newPos = { x: Math.floor((GRID_COLS - newPiece[0].length) / 2), y: 0 };
     gameState = {
       ...createInitialState(),
       playing: true,
@@ -101,34 +118,12 @@ io.on('connection', (socket) => {
     emitState();
   });
 
-  function dropPiece() {
-    if (!gameState.playing || gameState.spawning || !gameState.piece) return;
-    const piece = gameState.piece;
-    const pos = gameState.pos;
-    const nextPos = { x: pos.x, y: pos.y + 1 };
-    const cleanGrid = removePiece(gameState.grid, piece, pos);
-    if (checkCollision(piece, nextPos, cleanGrid)) {
-      let grid = placePiece(cleanGrid, piece, pos);
-      const { grid: clearedGrid, linesCleared } = clearLines(grid);
-      gameState = {
-        ...gameState,
-        spawning: true,
-        grid: clearedGrid,
-        score: gameState.score + linesCleared * 100,
-      };
-    } else {
-      let grid = placePiece(cleanGrid, piece, nextPos);
-      gameState = {
-        ...gameState,
-        grid,
-        pos: nextPos,
-      };
+  socket.on('down', () => {
+    const dropped = processDrop();
+    if (dropped) {
+      gameState = dropped;
     }
     emitState();
-  }
-
-  socket.on('down', () => {
-    dropPiece();
   });
 
   socket.on('rotate', () => {

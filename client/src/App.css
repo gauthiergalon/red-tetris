@@ -11,6 +11,10 @@ body {
   margin: 0 auto;
 }
 
+h1 {
+  margin-bottom: 1rem;
+}
+
 button {
   background-color: #333333;
   color: white;
@@ -21,59 +25,11 @@ button {
   font-size: 1rem;
 }
 
-button:hover {
+button:hover:not(:disabled) {
   background-color: #555555;
 }
 
-input {
-  background-color: #111111;
-  color: #ffffff;
-  border: 1px solid #555555;
-  padding: 0.5rem;
-  border-radius: 0.25rem;
-  font-size: 1rem;
-  outline: none;
-  width: 100%;
-  max-width: 300px;
-  margin-bottom: 0.5rem;
-}
-
-input:focus {
-  border-color: #88aa88;
-}
-
-.history-line {
-  padding: 0.25rem 0;
-}
-
-/* Game styles */
-.game-piece {
-  font-family: monospace;
-  font-size: 12px;
-  line-height: 1;
-}
-
-.game-grid {
-  display: grid;
-  grid-template-columns: repeat(10, 24px);
-  gap: 1px;
-}
-
-.game-cell {
-  width: 24px;
-  height: 24px;
-  background-color: #222;
-  border: 1px solid #555;
-  font-size: 10px;
-  text-align: center;
-  color: #fff;
-}
-
-.game-cell.active {
-  background-color: #ff4444;
-}
-
-.game-over {
-  color: #ff4444;
-  font-weight: bold;
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
