@@ -4,7 +4,7 @@
   "description": "A simple Tetris game",
   "type": "module",
   "scripts": {
-    "dev:server": "node --watch server/src/index.ts",
+    "dev:server": "tsx --watch server/src/index.ts",
     "dev:client": "vite",
     "build": "vite build",
     "start": "node server/src/index.ts",
@@ -16,6 +16,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "tsx": "^4.19.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.5"
   },

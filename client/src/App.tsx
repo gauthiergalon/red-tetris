@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import './App.css';
-
+import { Game } from './Game';
 interface AppProps {}
 
-function App(_props: AppProps) {
+export function App(_props: AppProps) {
   const [count, setCount] = useState<number>(0);
   const [inputText, setInputText] = useState<string>('');
   const [history, setHistory] = useState<string[]>([]);
@@ -78,6 +78,10 @@ function App(_props: AppProps) {
           onChange={(e) => setInputText(e.target.value)}
           onKeyDown={handleKeyDown}
         />
+      </section>
+
+      <section>
+        <Game />
       </section>
     </div>
   );
