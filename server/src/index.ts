@@ -118,7 +118,7 @@ io.on('connection', (socket) => {
     emitState();
   });
 
-  socket.on('down', () => {
+  socket.on('softDrop', () => {
     const dropped = processDrop();
     if (dropped) {
       gameState = dropped;
@@ -148,11 +148,29 @@ io.on('connection', (socket) => {
       emitState();
     }
   });
+
+  socket.on('hardDrop', () => {
+    if (!gameState.playing || gameState.spawning || !gameState.piece) return;
+    const bottomPos = { ...gameState.pos };
+    const cleanGrid = removePiece(gameState.grid, gameState.piece, gameState.pos);
+    while (!checkCollision(gameState.piece, { x: bottomPos.x, y: bottomPos.y + 1 }, cleanGrid)) {
+      bottomPos.y += 1;
+    }
+    const newGrid = placePiece(cleanGrid, gameState.piece, bottomPos);
+    const { grid: clearedGrid, linesCleared } = clearLines(newGrid);
+    gameState = {
+      ...gameState,
+      spawning: true,
+      grid: clearedGrid,
+      score: gameState.score + linesCleared * 100,
+    };
+    emitState();
+  });
 });
 
 const tickInterval = setInterval(() => {
   tick();
-}, 800);
+}, 500);
 
 function cleanup() {
   clearInterval(tickInterval);

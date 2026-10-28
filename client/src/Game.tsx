@@ -50,12 +50,16 @@ export function Game() {
     socket?.emit('move', 'left');
   }, [socket]);
 
-  const drop = useCallback(() => {
-    socket?.emit('down');
+  const softDrop = useCallback(() => {
+    socket?.emit('softDrop');
   }, [socket]);
 
   const moveRight = useCallback(() => {
     socket?.emit('move', 'right');
+  }, [socket]);
+
+  const hardDrop = useCallback(() => {
+    socket?.emit('hardDrop');
   }, [socket]);
 
   useEffect(() => {
@@ -72,12 +76,15 @@ export function Game() {
         moveRight();
       } else if (e.key === 'ArrowDown') {
         e.preventDefault();
-        drop();
+        softDrop();
+      } else if (e.key === ' ') {
+        e.preventDefault();
+        hardDrop();
       }
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [gameState.playing, gameState.piece, rotate, moveLeft, moveRight, drop]);
+  }, [gameState.playing, gameState.piece, rotate, moveLeft, moveRight, softDrop, hardDrop]);
 
   return (
     <div>
@@ -88,8 +95,9 @@ export function Game() {
         </button>
         <button onClick={rotate} disabled={isDisabled}>Rotate</button>
         <button onClick={moveLeft} disabled={isDisabled}>←</button>
-        <button onClick={drop} disabled={isDisabled}>↓</button>
         <button onClick={moveRight} disabled={isDisabled}>→</button>
+        <button onClick={softDrop} disabled={isDisabled}>↓</button>
+        <button onClick={hardDrop} disabled={isDisabled}>Hard Drop</button>
         <span>Score: {gameState.score}</span>
       </div>
 
