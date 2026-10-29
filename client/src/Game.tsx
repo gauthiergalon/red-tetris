@@ -36,6 +36,17 @@ export function Game() {
 	});
 
 	const [socket, setSocket] = useState<Socket | null>(null);
+	const socketRef = useRef(socket);
+	const gameStateRef = useRef(gameState);
+	const pressedKeysRef = useRef(new Set<string>());
+
+	useEffect(() => {
+		socketRef.current = socket;
+	}, [socket]);
+
+	useEffect(() => {
+		gameStateRef.current = gameState;
+	}, [gameState]);
 
 	useEffect(() => {
 		const s = io();
@@ -99,36 +110,58 @@ export function Game() {
 	}, [socket]);
 
 	useEffect(() => {
-		const handleKey = (e: KeyboardEvent) => {
-			if (!gameState.playing || !gameState.piece) return;
+		const handleKeyDown = (e: KeyboardEvent) => {
+			const s = socketRef.current;
+			const currentState = gameStateRef.current;
+			if (!currentState.playing || !currentState.piece) return;
+
+			if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(e.key)) {
+				e.preventDefault();
+			}
+
 			if (e.key === "ArrowUp" || e.key === "r") {
-				e.preventDefault();
-				rotate();
+				s?.emit("rotate");
 			} else if (e.key === "ArrowLeft") {
-				e.preventDefault();
-				moveLeft();
+				s?.emit("move", "left");
+				pressedKeysRef.current.add("left");
 			} else if (e.key === "ArrowRight") {
-				e.preventDefault();
-				moveRight();
+				s?.emit("move", "right");
+				pressedKeysRef.current.add("right");
 			} else if (e.key === "ArrowDown") {
-				e.preventDefault();
-				softDrop();
+				s?.emit("softDrop");
+				pressedKeysRef.current.add("down");
 			} else if (e.key === " ") {
-				e.preventDefault();
-				hardDrop();
+				s?.emit("hardDrop");
 			}
 		};
-		window.addEventListener("keydown", handleKey);
-		return () => window.removeEventListener("keydown", handleKey);
-	}, [
-		gameState.playing,
-		gameState.piece,
-		rotate,
-		moveLeft,
-		moveRight,
-		softDrop,
-		hardDrop,
-	]);
+
+		const handleKeyUp = (e: KeyboardEvent) => {
+			if (e.key === "ArrowLeft") pressedKeysRef.current.delete("left");
+			if (e.key === "ArrowRight") pressedKeysRef.current.delete("right");
+			if (e.key === "ArrowDown") pressedKeysRef.current.delete("down");
+		};
+
+		window.addEventListener("keydown", handleKeyDown);
+		window.addEventListener("keyup", handleKeyUp);
+		return () => {
+			window.removeEventListener("keydown", handleKeyDown);
+			window.removeEventListener("keyup", handleKeyUp);
+		};
+	}, []);
+
+	useEffect(() => {
+		const interval = setInterval(() => {
+			const s = socketRef.current;
+			const currentState = gameStateRef.current;
+			if (!currentState.playing || !currentState.piece) return;
+
+			const keys = pressedKeysRef.current;
+			if (keys.has("down")) s?.emit("softDrop");
+			if (keys.has("left")) s?.emit("move", "left");
+			if (keys.has("right")) s?.emit("move", "right");
+		}, 100);
+		return () => clearInterval(interval);
+	}, []);
 
 	return (
 		<div>
