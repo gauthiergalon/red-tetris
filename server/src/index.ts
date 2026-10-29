@@ -1,30 +1,28 @@
-import { createServer } from 'node:http';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import express, { type Express, type Request, type Response } from 'express';
-import { Server } from 'socket.io';
+import { createServer } from "node:http";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import express, { type Express, type Request, type Response } from "express";
+import { Server } from "socket.io";
+import type { Direction, GameState, Piece } from "./game.js";
 import {
-  PIECES,
-  GRID_COLS,
-  GRID_ROWS,
-  createInitialState,
-  checkCollision,
-  rotatePiece,
-  removePiece,
-  placePiece,
-  clearLines,
-} from './game.js';
-import type { GameState } from './game.js';
+	clearLines,
+	createInitialState,
+	PIECES,
+	isColliding,
+	rotateShape,
+	isDirection,
+	DIRECTIONS,
+} from "./game.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const distDir = path.resolve(__dirname, '../../dist');
+const distDir = path.resolve(__dirname, "../../dist");
 
 const app: Express = express();
 app.use(express.static(distDir));
 app.use((_req: Request, res: Response) => {
-  res.sendFile(path.join(distDir, 'index.html'));
+	res.sendFile(path.join(distDir, "index.html"));
 });
 
 const httpServer = createServer(app);
@@ -33,153 +31,204 @@ const io = new Server(httpServer);
 let gameState: GameState = createInitialState();
 
 function emitState() {
-  io.emit('gameState', gameState);
+	io.emit("gameState", gameState);
 }
 
-function spawnPiece(): GameState | null {
-  const randomIndex = Math.floor(Math.random() * PIECES.length);
-  const newPiece = PIECES[randomIndex];
-  const newPos = { x: Math.floor((GRID_COLS - newPiece[0].length) / 2), y: 0 };
+function setPiece(grid: string[][], piece: Piece): string[][] {
+    const newGrid = grid.map(row => [...row]);
 
-  if (checkCollision(newPiece, newPos, gameState.grid)) {
-    return { ...gameState, playing: false, spawning: false };
-  }
+    for (let y = 0; y < piece.shape.length; y++) {
+        for (let x = 0; x < piece.shape[y].length; x++) {
+            if (piece.shape[y][x] !== " ") {
+                const gridX = piece.pos.x + x;
+                const gridY = piece.pos.y + y;
+                newGrid[gridY][gridX] = piece.shape[y][x];
+            }
+        }
+    }
 
-  const grid = placePiece(gameState.grid, newPiece, newPos);
-  return {
-    ...gameState,
-    spawning: false,
-    piece: newPiece,
-    pos: newPos,
-    grid,
-  };
+    return newGrid;
 }
 
-function processDrop(): GameState | null {
-  if (!gameState.playing || gameState.spawning || !gameState.piece) return null;
+function spawnPiece(): Piece {
+	const newPiece: Piece = {
+		shape: PIECES[1].map(row => [...row]),
+		pos: { x: 3, y: 0 },
+	};
 
-  const piece = gameState.piece;
-  const pos = gameState.pos;
-  const nextPos = { x: pos.x, y: pos.y + 1 };
-  const cleanGrid = removePiece(gameState.grid, piece, pos);
+	if (isColliding(gameState.grid, newPiece)) {
+		gameState.playing = false;
+		emitState();
+	}
+    return newPiece;
+}
 
-  if (checkCollision(piece, nextPos, cleanGrid)) {
-    const grid = placePiece(cleanGrid, piece, pos);
-    const { grid: clearedGrid, linesCleared } = clearLines(grid);
+function drop(gameState: GameState): GameState {
+    if (!gameState.piece) return gameState;
+
+    const nextPiece = movePiece(gameState.piece, "down");
+
+    if (!isColliding(gameState.grid, nextPiece)) {
+        return {
+            ...gameState,
+            piece: nextPiece,
+        };
+    }
+
+    const grid = setPiece(gameState.grid, gameState.piece);
+    const clearedGrid = clearLines(grid);
+    const newPiece = spawnPiece();
+
     return {
-      ...gameState,
-      spawning: true,
-      grid: clearedGrid,
-      score: gameState.score + linesCleared * 100,
+        ...gameState,
+        grid: clearedGrid,
+        piece: newPiece,
     };
-  }
+}
 
-  const grid = placePiece(cleanGrid, piece, nextPos);
-  return {
-    ...gameState,
-    grid,
-    pos: nextPos,
-  };
+function rotate(gameState: GameState): GameState {
+	if (!gameState.piece) return gameState;
+	
+	const rotatedPiece = rotatePiece(gameState.piece);
+
+	if (!isColliding(gameState.grid, rotatedPiece)) {
+		return {
+			...gameState,
+			piece: rotatedPiece,
+		};
+	}
+
+	return gameState;
+}
+
+function rotatePiece(piece: Piece): Piece {
+    return {
+        ...piece,
+        shape: rotateShape(piece.shape),
+    };
+}
+
+function movePiece(piece: Piece, direction: Direction): Piece {
+	return {
+		...piece,
+		pos: {
+			...piece.pos,
+			x: piece.pos.x + DIRECTIONS[direction].x,
+			y: piece.pos.y + DIRECTIONS[direction].y,
+		},
+	};
+}
+
+function move(gameState: GameState, direction: Direction): GameState {
+	if (!gameState.piece) return gameState;
+
+	const nextPiece = movePiece(gameState.piece, direction);
+
+	if (!isColliding(gameState.grid, nextPiece)) {
+		return {
+			...gameState,
+			piece: nextPiece,
+		};
+	}
+
+	return gameState;
+}
+
+function softDrop(gameState: GameState): GameState {
+	if (!gameState.piece) return gameState;
+
+	const nextPiece = movePiece(gameState.piece, "down");
+
+	if (!isColliding(gameState.grid, nextPiece)) {
+		return {
+			...gameState,
+			piece: nextPiece,
+		};
+	}
+
+	return gameState;
+}
+
+function hardDrop(gameState: GameState): GameState {
+    if (!gameState.piece) return gameState;
+
+    let droppedPiece = gameState.piece;
+
+    while (true) {
+        const nextPiece = movePiece(droppedPiece, "down");
+
+        if (isColliding(gameState.grid, nextPiece)) {
+            break;
+        }
+
+        droppedPiece = nextPiece;
+    }
+
+    const grid = setPiece(gameState.grid, droppedPiece);
+    const clearedGrid = clearLines(grid);
+    const newPiece = spawnPiece();
+
+    return {
+        ...gameState,
+        grid: clearedGrid,
+        piece: newPiece,
+    };
 }
 
 function tick() {
-  if (!gameState.playing) return;
+	if (!gameState.playing) return;
 
-  if (gameState.spawning) {
-    const spawned = spawnPiece();
-    if (spawned) {
-      gameState = spawned;
-    }
-  } else {
-    const dropped = processDrop();
-    if (dropped) {
-      gameState = dropped;
-    }
-  }
-
-  emitState();
+	gameState = drop(gameState);
+	emitState()
 }
 
-io.on('connection', (socket) => {
-  socket.emit('hello', 'Server responds!');
-  socket.emit('gameState', gameState);
+io.on("connection", (socket) => {
+	socket.emit("hello", "Server responds!");
+	socket.emit("gameState", gameState);
 
-  socket.on('start', () => {
-    const randomIndex = Math.floor(Math.random() * PIECES.length);
-    const newPiece = PIECES[randomIndex];
-    const newPos = { x: Math.floor((GRID_COLS - newPiece[0].length) / 2), y: 0 };
-    gameState = {
-      ...createInitialState(),
-      playing: true,
-      spawning: true,
-      piece: newPiece,
-      pos: newPos,
-    };
-    emitState();
-  });
+	socket.on("start", () => {
+		gameState = createInitialState();
+		const newPiece = spawnPiece();
 
-  socket.on('softDrop', () => {
-    const dropped = processDrop();
-    if (dropped) {
-      gameState = dropped;
-    }
-    emitState();
-  });
+		[gameState.playing, gameState.piece] = [true, newPiece];
 
-  socket.on('rotate', () => {
-    if (!gameState.playing || gameState.spawning || !gameState.piece) return;
-    const rotated = rotatePiece(gameState.piece);
-    const cleanGrid = removePiece(gameState.grid, gameState.piece, gameState.pos);
-    if (!checkCollision(rotated, gameState.pos, cleanGrid)) {
-      const newGrid = placePiece(cleanGrid, rotated, gameState.pos);
-      gameState = { ...gameState, piece: rotated, grid: newGrid };
-      emitState();
-    }
-  });
+		emitState();
+	});
 
-  socket.on('move', (dir: unknown) => {
-    if (!gameState.playing || gameState.spawning || !gameState.piece) return;
-    if (dir !== 'left' && dir !== 'right') return;
-    const newPos = { ...gameState.pos, x: gameState.pos.x + (dir === 'left' ? -1 : 1) };
-    const cleanGrid = removePiece(gameState.grid, gameState.piece, gameState.pos);
-    if (!checkCollision(gameState.piece, newPos, cleanGrid)) {
-      const newGrid = placePiece(cleanGrid, gameState.piece, newPos);
-      gameState = { ...gameState, pos: newPos, grid: newGrid };
-      emitState();
-    }
-  });
+	socket.on("rotate", () => {
+		gameState = rotate(gameState);
+		emitState();
+	});
 
-  socket.on('hardDrop', () => {
-    if (!gameState.playing || gameState.spawning || !gameState.piece) return;
-    const bottomPos = { ...gameState.pos };
-    const cleanGrid = removePiece(gameState.grid, gameState.piece, gameState.pos);
-    while (!checkCollision(gameState.piece, { x: bottomPos.x, y: bottomPos.y + 1 }, cleanGrid)) {
-      bottomPos.y += 1;
-    }
-    const newGrid = placePiece(cleanGrid, gameState.piece, bottomPos);
-    const { grid: clearedGrid, linesCleared } = clearLines(newGrid);
-    gameState = {
-      ...gameState,
-      spawning: true,
-      grid: clearedGrid,
-      score: gameState.score + linesCleared * 100,
-    };
-    emitState();
-  });
+	socket.on("move", (direction: Direction) => {
+		if (!isDirection(direction)) return;
+		gameState = move(gameState, direction);
+		emitState();
+	});
+
+	socket.on("softDrop", () => {
+		gameState = softDrop(gameState);
+		emitState();
+	});
+
+	socket.on("hardDrop", () => {
+		gameState = hardDrop(gameState);
+		emitState();
+	});
 });
 
 const tickInterval = setInterval(() => {
-  tick();
+	tick();
 }, 500);
 
 function cleanup() {
-  clearInterval(tickInterval);
-  httpServer.close();
+	clearInterval(tickInterval);
+	httpServer.close();
 }
 
-process.on('SIGTERM', cleanup);
-process.on('SIGINT', cleanup);
+process.on("SIGTERM", cleanup);
+process.on("SIGINT", cleanup);
 
 httpServer.listen(PORT, () => {
-  console.log(`Express + Socket.IO server started on http://localhost:${PORT}`);
+	console.log(`Express + Socket.IO server started on http://localhost:${PORT}`);
 });
