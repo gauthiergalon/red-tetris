@@ -35,24 +35,24 @@ function emitState() {
 }
 
 function setPiece(grid: string[][], piece: Piece): string[][] {
-    const newGrid = grid.map(row => [...row]);
+	const newGrid = grid.map((row) => [...row]);
 
-    for (let y = 0; y < piece.shape.length; y++) {
-        for (let x = 0; x < piece.shape[y].length; x++) {
-            if (piece.shape[y][x] !== " ") {
-                const gridX = piece.pos.x + x;
-                const gridY = piece.pos.y + y;
-                newGrid[gridY][gridX] = piece.shape[y][x];
-            }
-        }
-    }
+	for (let y = 0; y < piece.shape.length; y++) {
+		for (let x = 0; x < piece.shape[y].length; x++) {
+			if (piece.shape[y][x] !== " ") {
+				const gridX = piece.pos.x + x;
+				const gridY = piece.pos.y + y;
+				newGrid[gridY][gridX] = piece.shape[y][x];
+			}
+		}
+	}
 
-    return newGrid;
+	return newGrid;
 }
 
 function spawnPiece(): Piece {
 	const newPiece: Piece = {
-		shape: PIECES[1].map(row => [...row]),
+		shape: PIECES[1].map((row) => [...row]),
 		pos: { x: 3, y: 0 },
 	};
 
@@ -60,35 +60,35 @@ function spawnPiece(): Piece {
 		gameState.playing = false;
 		emitState();
 	}
-    return newPiece;
+	return newPiece;
 }
 
 function drop(gameState: GameState): GameState {
-    if (!gameState.piece) return gameState;
+	if (!gameState.piece) return gameState;
 
-    const nextPiece = movePiece(gameState.piece, "down");
+	const nextPiece = movePiece(gameState.piece, "down");
 
-    if (!isColliding(gameState.grid, nextPiece)) {
-        return {
-            ...gameState,
-            piece: nextPiece,
-        };
-    }
+	if (!isColliding(gameState.grid, nextPiece)) {
+		return {
+			...gameState,
+			piece: nextPiece,
+		};
+	}
 
-    const grid = setPiece(gameState.grid, gameState.piece);
-    const clearedGrid = clearLines(grid);
-    const newPiece = spawnPiece();
+	const grid = setPiece(gameState.grid, gameState.piece);
+	const clearedGrid = clearLines(grid);
+	const newPiece = spawnPiece();
 
-    return {
-        ...gameState,
-        grid: clearedGrid,
-        piece: newPiece,
-    };
+	return {
+		...gameState,
+		grid: clearedGrid,
+		piece: newPiece,
+	};
 }
 
 function rotate(gameState: GameState): GameState {
 	if (!gameState.piece) return gameState;
-	
+
 	const rotatedPiece = rotatePiece(gameState.piece);
 
 	if (!isColliding(gameState.grid, rotatedPiece)) {
@@ -102,10 +102,10 @@ function rotate(gameState: GameState): GameState {
 }
 
 function rotatePiece(piece: Piece): Piece {
-    return {
-        ...piece,
-        shape: rotateShape(piece.shape),
-    };
+	return {
+		...piece,
+		shape: rotateShape(piece.shape),
+	};
 }
 
 function movePiece(piece: Piece, direction: Direction): Piece {
@@ -150,36 +150,36 @@ function softDrop(gameState: GameState): GameState {
 }
 
 function hardDrop(gameState: GameState): GameState {
-    if (!gameState.piece) return gameState;
+	if (!gameState.piece) return gameState;
 
-    let droppedPiece = gameState.piece;
+	let droppedPiece = gameState.piece;
 
-    while (true) {
-        const nextPiece = movePiece(droppedPiece, "down");
+	while (true) {
+		const nextPiece = movePiece(droppedPiece, "down");
 
-        if (isColliding(gameState.grid, nextPiece)) {
-            break;
-        }
+		if (isColliding(gameState.grid, nextPiece)) {
+			break;
+		}
 
-        droppedPiece = nextPiece;
-    }
+		droppedPiece = nextPiece;
+	}
 
-    const grid = setPiece(gameState.grid, droppedPiece);
-    const clearedGrid = clearLines(grid);
-    const newPiece = spawnPiece();
+	const grid = setPiece(gameState.grid, droppedPiece);
+	const clearedGrid = clearLines(grid);
+	const newPiece = spawnPiece();
 
-    return {
-        ...gameState,
-        grid: clearedGrid,
-        piece: newPiece,
-    };
+	return {
+		...gameState,
+		grid: clearedGrid,
+		piece: newPiece,
+	};
 }
 
 function tick() {
 	if (!gameState.playing) return;
 
 	gameState = drop(gameState);
-	emitState()
+	emitState();
 }
 
 io.on("connection", (socket) => {

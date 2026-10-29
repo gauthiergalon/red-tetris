@@ -2,14 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 
 const COLORS: Record<string, string> = {
-  " ": "#222",
-  I: "#00f0f0",
-  O: "#f0f000",
-  T: "#a000f0",
-  S: "#00f000",
-  Z: "#f00000",
-  J: "#0000f0",
-  L: "#f0a000",
+	" ": "#222",
+	I: "#00f0f0",
+	O: "#f0f000",
+	T: "#a000f0",
+	S: "#00f000",
+	Z: "#f00000",
+	J: "#0000f0",
+	L: "#f0a000",
 };
 
 const GRID_COLS = 10;
@@ -79,10 +79,6 @@ export function Game() {
 
 	const isDisabled = !gameState.playing || !gameState.piece;
 
-	function getShadowPos() {
-
-	}
-
 	const startGame = useCallback(() => {
 		socket?.emit("start");
 	}, [socket]);
@@ -99,11 +95,9 @@ export function Game() {
 		socket?.emit("move", "right");
 	}, [socket]);
 
-
 	const softDrop = useCallback(() => {
 		socket?.emit("softDrop");
 	}, [socket]);
-
 
 	const hardDrop = useCallback(() => {
 		socket?.emit("hardDrop");
@@ -115,7 +109,9 @@ export function Game() {
 			const currentState = gameStateRef.current;
 			if (!currentState.playing || !currentState.piece) return;
 
-			if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(e.key)) {
+			if (
+				["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(e.key)
+			) {
 				e.preventDefault();
 			}
 
@@ -159,7 +155,7 @@ export function Game() {
 			if (keys.has("down")) s?.emit("softDrop");
 			if (keys.has("left")) s?.emit("move", "left");
 			if (keys.has("right")) s?.emit("move", "right");
-		}, 100);
+		}, 200);
 		return () => clearInterval(interval);
 	}, []);
 
@@ -232,7 +228,7 @@ export function Game() {
 								}}
 							/>
 						);
-					})
+					}),
 				)}
 			</div>
 
