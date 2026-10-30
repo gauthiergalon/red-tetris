@@ -21,38 +21,70 @@ export const GRID_ROWS = 20;
 export const SRS_COMMON_TABLES = [
 	// 0 -> 1
 	[
-		{ x: 0, y: 0 }, { x: -1, y: 0 }, { x: -1, y: 1 }, { x: 0, y: -2 }, { x: -1, y: -2 },
+		{ x: 0, y: 0 },
+		{ x: -1, y: 0 },
+		{ x: -1, y: 1 },
+		{ x: 0, y: -2 },
+		{ x: -1, y: -2 },
 	],
 	// 1 -> 2
 	[
-		{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: -1 }, { x: 0, y: 2 }, { x: 1, y: 2 },
+		{ x: 0, y: 0 },
+		{ x: 1, y: 0 },
+		{ x: 1, y: -1 },
+		{ x: 0, y: 2 },
+		{ x: 1, y: 2 },
 	],
 	// 2 -> 3
 	[
-		{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: -2 }, { x: 1, y: -2 },
+		{ x: 0, y: 0 },
+		{ x: 1, y: 0 },
+		{ x: 1, y: 1 },
+		{ x: 0, y: -2 },
+		{ x: 1, y: -2 },
 	],
 	// 3 -> 0
 	[
-		{ x: 0, y: 0 }, { x: -1, y: 0 }, { x: -1, y: -1 }, { x: 0, y: 2 }, { x: -1, y: 2 },
+		{ x: 0, y: 0 },
+		{ x: -1, y: 0 },
+		{ x: -1, y: -1 },
+		{ x: 0, y: 2 },
+		{ x: -1, y: 2 },
 	],
 ];
 
 export const SRS_I_TABLES = [
 	// 0 -> 1
 	[
-		{ x: 0, y: 0 }, { x: -2, y: 0 }, { x: 1, y: 0 }, { x: -2, y: -1 }, { x: 1, y: 2 },
+		{ x: 0, y: 0 },
+		{ x: -2, y: 0 },
+		{ x: 1, y: 0 },
+		{ x: -2, y: -1 },
+		{ x: 1, y: 2 },
 	],
 	// 1 -> 2
 	[
-		{ x: 0, y: 0 }, { x: -1, y: 0 }, { x: 2, y: 0 }, { x: -1, y: 2 }, { x: 2, y: -1 },
+		{ x: 0, y: 0 },
+		{ x: -1, y: 0 },
+		{ x: 2, y: 0 },
+		{ x: -1, y: 2 },
+		{ x: 2, y: -1 },
 	],
 	// 2 -> 3
 	[
-		{ x: 0, y: 0 }, { x: 2, y: 0 }, { x: -1, y: 0 }, { x: 2, y: 1 }, { x: -1, y: -2 },
+		{ x: 0, y: 0 },
+		{ x: 2, y: 0 },
+		{ x: -1, y: 0 },
+		{ x: 2, y: 1 },
+		{ x: -1, y: -2 },
 	],
 	// 3 -> 0
 	[
-		{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: -2, y: 0 }, { x: 1, y: -2 }, { x: -2, y: 1 },
+		{ x: 0, y: 0 },
+		{ x: 1, y: 0 },
+		{ x: -2, y: 0 },
+		{ x: 1, y: -2 },
+		{ x: -2, y: 1 },
 	],
 ];
 
@@ -165,11 +197,14 @@ function shuffleBag(bag: number[]): number[] {
 	return newBag;
 }
 
-let pieceSequence: number[] = shuffleBag(PIECE_INDICES);
+const pieceSequence: number[] = shuffleBag(PIECE_INDICES);
 
 const PIECE_TYPES: PieceType[] = ["I", "O", "T", "S", "Z", "J", "L"];
 
-export function getNextShape(index: number): { shape: string[][]; type: PieceType } {
+export function getNextShape(index: number): {
+	shape: string[][];
+	type: PieceType;
+} {
 	if (index >= pieceSequence.length) {
 		pieceSequence.push(...shuffleBag(PIECE_INDICES));
 	}

@@ -30,15 +30,23 @@ app.use((_req: Request, res: Response) => {
 const httpServer = createServer(app);
 const io = new Server(httpServer);
 
-let gameState: GameState = createInitialState();
-
-function emitState() {
-	io.emit("gameState", gameState);
+interface Player {
+	socketId: string;
+	username: string;
+	state: GameState;
 }
+
+interface Room {
+	id: string;
+	owner: string;
+	players: Map<string, Player>;
+	isPlaying: boolean;
+}
+
+const rooms: Map<string, Room> = new Map();
 
 function setPiece(grid: string[][], piece: Piece): string[][] {
 	const newGrid = grid.map((row) => [...row]);
-
 	for (let y = 0; y < piece.shape.length; y++) {
 		for (let x = 0; x < piece.shape[y].length; x++) {
 			if (piece.shape[y][x] !== " ") {
@@ -48,11 +56,13 @@ function setPiece(grid: string[][], piece: Piece): string[][] {
 			}
 		}
 	}
-
 	return newGrid;
 }
 
-function createNewPiece(sequenceIndex: number): { piece: Piece; newSequenceIndex: number } {
+function createNewPiece(sequenceIndex: number): {
+	piece: Piece;
+	newSequenceIndex: number;
+} {
 	const { shape, type } = getNextShape(sequenceIndex);
 	const newPiece: Piece = {
 		shape,
@@ -65,21 +75,16 @@ function createNewPiece(sequenceIndex: number): { piece: Piece; newSequenceIndex
 
 function drop(gameState: GameState): GameState {
 	if (!gameState.piece) return gameState;
-
 	const nextPiece = movePiece(gameState.piece, "down");
-
 	if (!isColliding(gameState.grid, nextPiece)) {
-		return {
-			...gameState,
-			piece: nextPiece,
-		};
+		return { ...gameState, piece: nextPiece };
 	}
-
 	const grid = setPiece(gameState.grid, gameState.piece);
 	const clearedGrid = clearLines(grid);
-	const { piece: newPiece, newSequenceIndex } = createNewPiece(gameState.sequenceIndex);
+	const { piece: newPiece, newSequenceIndex } = createNewPiece(
+		gameState.sequenceIndex,
+	);
 	const gameOver = isColliding(clearedGrid, newPiece);
-
 	return {
 		...gameState,
 		grid: clearedGrid,
@@ -91,14 +96,12 @@ function drop(gameState: GameState): GameState {
 
 function rotate(gameState: GameState): GameState {
 	if (!gameState.piece) return gameState;
-
 	const currentState = gameState.piece.rotationState;
 	const rotatedShape = rotateShape(gameState.piece.shape);
 	const isIPiece = gameState.piece.type === "I";
 	const tables = isIPiece ? SRS_I_TABLES : SRS_COMMON_TABLES;
 	const nextState = (currentState + 1) % 4;
 	const offsets = tables[currentState];
-
 	for (const offset of offsets) {
 		const testPiece = {
 			...gameState.piece,
@@ -110,21 +113,14 @@ function rotate(gameState: GameState): GameState {
 			rotationState: nextState,
 		};
 		if (!isColliding(gameState.grid, testPiece)) {
-			return {
-				...gameState,
-				piece: testPiece,
-			};
+			return { ...gameState, piece: testPiece };
 		}
 	}
-
 	return gameState;
 }
 
 function rotatePiece(piece: Piece): Piece {
-	return {
-		...piece,
-		shape: rotateShape(piece.shape),
-	};
+	return { ...piece, shape: rotateShape(piece.shape) };
 }
 
 function movePiece(piece: Piece, direction: Direction): Piece {
@@ -140,54 +136,36 @@ function movePiece(piece: Piece, direction: Direction): Piece {
 
 function move(gameState: GameState, direction: Direction): GameState {
 	if (!gameState.piece) return gameState;
-
 	const nextPiece = movePiece(gameState.piece, direction);
-
 	if (!isColliding(gameState.grid, nextPiece)) {
-		return {
-			...gameState,
-			piece: nextPiece,
-		};
+		return { ...gameState, piece: nextPiece };
 	}
-
 	return gameState;
 }
 
 function softDrop(gameState: GameState): GameState {
 	if (!gameState.piece) return gameState;
-
 	const nextPiece = movePiece(gameState.piece, "down");
-
 	if (!isColliding(gameState.grid, nextPiece)) {
-		return {
-			...gameState,
-			piece: nextPiece,
-		};
+		return { ...gameState, piece: nextPiece };
 	}
-
 	return gameState;
 }
 
 function hardDrop(gameState: GameState): GameState {
 	if (!gameState.piece) return gameState;
-
 	let droppedPiece = gameState.piece;
-
 	while (true) {
 		const nextPiece = movePiece(droppedPiece, "down");
-
-		if (isColliding(gameState.grid, nextPiece)) {
-			break;
-		}
-
+		if (isColliding(gameState.grid, nextPiece)) break;
 		droppedPiece = nextPiece;
 	}
-
 	const grid = setPiece(gameState.grid, droppedPiece);
 	const clearedGrid = clearLines(grid);
-	const { piece: newPiece, newSequenceIndex } = createNewPiece(gameState.sequenceIndex);
+	const { piece: newPiece, newSequenceIndex } = createNewPiece(
+		gameState.sequenceIndex,
+	);
 	const gameOver = isColliding(clearedGrid, newPiece);
-
 	return {
 		...gameState,
 		grid: clearedGrid,
@@ -198,44 +176,128 @@ function hardDrop(gameState: GameState): GameState {
 }
 
 function tick() {
-	if (!gameState.playing) return;
-
-	gameState = drop(gameState);
-	emitState();
+	for (const [, room] of rooms) {
+		for (const [socketId, player] of room.players) {
+			if (!player) continue;
+			if (player.state.playing) {
+				const newState = drop(player.state);
+				room.players.set(socketId, {
+					...player,
+					state: newState,
+				});
+			}
+			io.to(socketId).emit("gameState", player.state);
+		}
+	}
 }
 
 io.on("connection", (socket) => {
-	socket.emit("hello", "Server responds!");
-	socket.emit("gameState", gameState);
+	const auth = socket.handshake.auth || {};
+	const { roomId, username } = auth;
+	if (!roomId || !username) {
+		socket.disconnect();
+		return;
+	}
+
+	socket.data.roomId = roomId;
+	socket.data.username = username;
+
+	socket.join(roomId);
+
+	if (!rooms.has(roomId)) {
+		rooms.set(roomId, {
+			id: roomId,
+			owner: socket.id,
+			players: new Map(),
+			isPlaying: false,
+		});
+	}
+
+	const room = rooms.get(roomId)!;
+	if (!room.players.has(socket.id)) {
+		room.players.set(socket.id, {
+			socketId: socket.id,
+			username: username,
+			state: createInitialState(),
+		});
+	}
+
+	socket.emit("gameState", room.players.get(socket.id)!.state);
 
 	socket.on("start", () => {
-		gameState = createInitialState();
-		const newPiece = createNewPiece(gameState.sequenceIndex).piece;
+		if (socket.id !== room.owner) return;
 
-		[gameState.playing, gameState.piece] = [true, newPiece];
+		for (const [playerId, player] of room.players) {
+			const newState = createInitialState();
+			const newPiece = createNewPiece(newState.sequenceIndex).piece;
+			room.players.set(playerId, {
+				...player,
+				state: {
+					...newState,
+					playing: true,
+					piece: newPiece,
+				},
+			});
+		}
 
-		emitState();
+		for (const [playerId, player] of room.players) {
+			if (player) {
+				io.to(playerId).emit("gameState", player.state);
+			}
+		}
 	});
 
 	socket.on("rotate", () => {
-		gameState = rotate(gameState);
-		emitState();
+		const player = room.players.get(socket.id);
+		if (!player) return;
+		const newState = rotate(player.state);
+		room.players.set(socket.id, { ...player, state: newState });
+		socket.emit("gameState", newState);
 	});
 
 	socket.on("move", (direction: Direction) => {
 		if (!isDirection(direction)) return;
-		gameState = move(gameState, direction);
-		emitState();
+		const player = room.players.get(socket.id);
+		if (!player) return;
+		const newState = move(player.state, direction);
+		room.players.set(socket.id, { ...player, state: newState });
+		socket.emit("gameState", newState);
 	});
 
 	socket.on("softDrop", () => {
-		gameState = softDrop(gameState);
-		emitState();
+		const player = room.players.get(socket.id);
+		if (!player) return;
+		const newState = softDrop(player.state);
+		room.players.set(socket.id, { ...player, state: newState });
+		socket.emit("gameState", newState);
 	});
 
 	socket.on("hardDrop", () => {
-		gameState = hardDrop(gameState);
-		emitState();
+		const player = room.players.get(socket.id);
+		if (!player) return;
+		const newState = hardDrop(player.state);
+		room.players.set(socket.id, { ...player, state: newState });
+		socket.emit("gameState", newState);
+	});
+
+	socket.on("disconnect", () => {
+		const currentRoomId = socket.data.roomId;
+		if (!currentRoomId || !rooms.has(currentRoomId)) return;
+
+		const room = rooms.get(currentRoomId)!;
+		room.players.delete(socket.id);
+
+		if (room.players.size === 0) {
+			rooms.delete(currentRoomId);
+		} else if (socket.id === room.owner) {
+			const socketsInRoom = io.sockets.adapter.rooms.get(currentRoomId);
+			if (socketsInRoom && socketsInRoom.size > 0) {
+				const firstSid = socketsInRoom.values().next().value;
+				if (firstSid) {
+					room.owner = firstSid;
+				}
+			}
+		}
 	});
 });
 

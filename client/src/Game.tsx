@@ -27,7 +27,13 @@ export interface Piece {
 	pos: { x: number; y: number };
 }
 
-export function Game() {
+export function Game({
+	roomId,
+	username,
+}: {
+	roomId: string;
+	username: string;
+}) {
 	const [gameState, setGameState] = useState<GameState>({
 		piece: undefined,
 		grid: Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(" ")),
@@ -47,17 +53,6 @@ export function Game() {
 	useEffect(() => {
 		gameStateRef.current = gameState;
 	}, [gameState]);
-
-	useEffect(() => {
-		const s = io();
-		setSocket(s);
-		s.on("gameState", (state: GameState) => {
-			setGameState(state);
-		});
-		return () => {
-			s.disconnect();
-		};
-	}, []);
 
 	const [timer, setTimer] = useState(0);
 	const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -172,7 +167,10 @@ export function Game() {
 					if (shape[ry][rx] !== " ") {
 						const gy = nextY + ry;
 						const gx = pos.x + rx;
-						if (gy >= 20 || (gx >= 0 && gx < 10 && gameState.grid[gy][gx] !== " ")) {
+						if (
+							gy >= 20 ||
+							(gx >= 0 && gx < 10 && gameState.grid[gy][gx] !== " ")
+						) {
 							collision = true;
 							break;
 						}
@@ -187,6 +185,15 @@ export function Game() {
 		}
 		return y;
 	})();
+
+	useEffect(() => {
+		const s = io({ auth: { roomId, username } });
+		setSocket(s);
+		s.on("gameState", (state: GameState) => setGameState(state));
+		return () => {
+			s.disconnect();
+		};
+	}, [roomId, username]);
 
 	return (
 		<div>
@@ -236,7 +243,11 @@ export function Game() {
 							const { shape } = gameState.piece;
 							for (let y = 0; y < shape.length; y++) {
 								for (let x = 0; x < shape[y].length; x++) {
-									if (shape[y][x] !== " " && rowIndex === ghostY + y && colIndex === gameState.piece!.pos.x + x) {
+									if (
+										shape[y][x] !== " " &&
+										rowIndex === ghostY + y &&
+										colIndex === gameState.piece!.pos.x + x
+									) {
 										ghostChar = shape[y][x];
 									}
 								}
@@ -259,7 +270,8 @@ export function Game() {
 							}
 						}
 						const isGhost = ghostChar !== " ";
-							const cellValue = pieceChar !== " " ? pieceChar : (isGhost ? ghostChar : cell);
+						const cellValue =
+							pieceChar !== " " ? pieceChar : isGhost ? ghostChar : cell;
 						return (
 							<div
 								// biome-ignore lint/suspicious/noArrayIndexKey: grid cells are fixed by position
@@ -268,7 +280,7 @@ export function Game() {
 									width: "20px",
 									height: "20px",
 									backgroundColor: COLORS[cellValue] ?? "#222",
-									opacity: (isGhost && pieceChar === " ") ? 0.5 : 1,
+									opacity: isGhost && pieceChar === " " ? 0.5 : 1,
 								}}
 							/>
 						);
