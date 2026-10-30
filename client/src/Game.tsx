@@ -159,6 +159,35 @@ export function Game() {
 		return () => clearInterval(interval);
 	}, []);
 
+	// Drop shadow / ghost piece calculation
+	const ghostY = (() => {
+		if (!gameState.piece || !gameState.grid) return 0;
+		const { shape, pos } = gameState.piece;
+		let y = pos.y;
+		while (true) {
+			const nextY = y + 1;
+			let collision = false;
+			for (let ry = 0; ry < shape.length; ry++) {
+				for (let rx = 0; rx < shape[ry].length; rx++) {
+					if (shape[ry][rx] !== " ") {
+						const gy = nextY + ry;
+						const gx = pos.x + rx;
+						if (gy >= 20 || (gx >= 0 && gx < 10 && gameState.grid[gy][gx] !== " ")) {
+							collision = true;
+							break;
+						}
+					}
+				}
+				if (collision) break;
+			}
+			if (collision) {
+				return y;
+			}
+			y = nextY;
+		}
+		return y;
+	})();
+
 	return (
 		<div>
 			<h2>Tetris Game</h2>
@@ -201,6 +230,19 @@ export function Game() {
 			>
 				{gameState.grid.map((row, rowIndex) =>
 					row.map((cell, colIndex) => {
+						// Ghost/drop shadow
+						let ghostChar = " ";
+						if (gameState.piece && ghostY > (gameState.piece?.pos.y ?? 0)) {
+							const { shape } = gameState.piece;
+							for (let y = 0; y < shape.length; y++) {
+								for (let x = 0; x < shape[y].length; x++) {
+									if (shape[y][x] !== " " && rowIndex === ghostY + y && colIndex === gameState.piece!.pos.x + x) {
+										ghostChar = shape[y][x];
+									}
+								}
+							}
+						}
+
 						let pieceChar = " ";
 						if (gameState.piece) {
 							const { shape, pos } = gameState.piece;
@@ -216,7 +258,8 @@ export function Game() {
 								}
 							}
 						}
-						const cellValue = pieceChar !== " " ? pieceChar : cell;
+						const isGhost = ghostChar !== " ";
+							const cellValue = pieceChar !== " " ? pieceChar : (isGhost ? ghostChar : cell);
 						return (
 							<div
 								// biome-ignore lint/suspicious/noArrayIndexKey: grid cells are fixed by position
@@ -224,8 +267,8 @@ export function Game() {
 								style={{
 									width: "20px",
 									height: "20px",
-									backgroundColor: COLORS[cellValue] ?? "#222",
-									border: "1px solid #555",
+									backgroundColor: isGhost ? (COLORS[cellValue] ?? "#222") : (COLORS[cellValue] ?? "#222"),
+									opacity: isGhost ? 0.3 : 1,
 								}}
 							/>
 						);
