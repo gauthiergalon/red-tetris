@@ -3,6 +3,7 @@ export interface GameState {
 	grid: string[][];
 	lockDelay: number;
 	playing: boolean;
+	sequenceIndex: number;
 }
 
 export interface Piece {
@@ -65,6 +66,7 @@ export function createInitialState(): GameState {
 		grid: Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(" ")),
 		lockDelay: 0,
 		playing: false,
+		sequenceIndex: 0,
 	};
 }
 
@@ -108,6 +110,27 @@ export function isColliding(grid: string[][], piece: Piece): boolean {
 		}
 	}
 	return false;
+}
+
+const PIECE_INDICES = [0, 1, 2, 3, 4, 5, 6];
+
+function shuffleBag(bag: number[]): number[] {
+	const newBag = [...bag];
+	for (let i = newBag.length - 1; i > 0; i--) {
+		const j = Math.floor(Math.random() * (i + 1));
+		[newBag[i], newBag[j]] = [newBag[j], newBag[i]];
+	}
+	return newBag;
+}
+
+let pieceSequence: number[] = shuffleBag(PIECE_INDICES);
+
+export function getNextShape(index: number): string[][] {
+	if (index >= pieceSequence.length) {
+		pieceSequence.push(...shuffleBag(PIECE_INDICES));
+	}
+	const pieceIndex = pieceSequence[index];
+	return PIECES[pieceIndex].map((row) => [...row]);
 }
 
 export function clearLines(grid: string[][]): string[][] {

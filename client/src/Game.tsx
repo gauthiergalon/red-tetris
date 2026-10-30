@@ -115,15 +115,15 @@ export function Game() {
 				e.preventDefault();
 			}
 
-			if (e.key === "ArrowUp" || e.key === "r") {
+			if (e.key === "ArrowUp" && !e.repeat) {
 				s?.emit("rotate");
-			} else if (e.key === "ArrowLeft") {
+			} else if (e.key === "ArrowLeft" && !e.repeat) {
 				s?.emit("move", "left");
 				pressedKeysRef.current.add("left");
-			} else if (e.key === "ArrowRight") {
+			} else if (e.key === "ArrowRight" && !e.repeat) {
 				s?.emit("move", "right");
 				pressedKeysRef.current.add("right");
-			} else if (e.key === "ArrowDown") {
+			} else if (e.key === "ArrowDown" && !e.repeat) {
 				s?.emit("softDrop");
 				pressedKeysRef.current.add("down");
 			} else if (e.key === " ") {
@@ -219,6 +219,7 @@ export function Game() {
 						const cellValue = pieceChar !== " " ? pieceChar : cell;
 						return (
 							<div
+								// biome-ignore lint/suspicious/noArrayIndexKey: grid cells are fixed by position
 								key={`${rowIndex}-${colIndex}`}
 								style={{
 									width: "20px",

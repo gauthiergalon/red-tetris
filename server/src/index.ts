@@ -12,6 +12,7 @@ import {
 	rotateShape,
 	isDirection,
 	DIRECTIONS,
+	getNextShape,
 } from "./game.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -50,17 +51,12 @@ function setPiece(grid: string[][], piece: Piece): string[][] {
 	return newGrid;
 }
 
-function spawnPiece(): Piece {
+function createNewPiece(sequenceIndex: number): { piece: Piece; newSequenceIndex: number } {
 	const newPiece: Piece = {
-		shape: PIECES[1].map((row) => [...row]),
+		shape: getNextShape(sequenceIndex),
 		pos: { x: 3, y: 0 },
 	};
-
-	if (isColliding(gameState.grid, newPiece)) {
-		gameState.playing = false;
-		emitState();
-	}
-	return newPiece;
+	return { piece: newPiece, newSequenceIndex: sequenceIndex + 1 };
 }
 
 function drop(gameState: GameState): GameState {
@@ -77,12 +73,15 @@ function drop(gameState: GameState): GameState {
 
 	const grid = setPiece(gameState.grid, gameState.piece);
 	const clearedGrid = clearLines(grid);
-	const newPiece = spawnPiece();
+	const { piece: newPiece, newSequenceIndex } = createNewPiece(gameState.sequenceIndex);
+	const gameOver = isColliding(clearedGrid, newPiece);
 
 	return {
 		...gameState,
 		grid: clearedGrid,
 		piece: newPiece,
+		sequenceIndex: newSequenceIndex,
+		playing: gameOver ? false : gameState.playing,
 	};
 }
 
@@ -166,12 +165,15 @@ function hardDrop(gameState: GameState): GameState {
 
 	const grid = setPiece(gameState.grid, droppedPiece);
 	const clearedGrid = clearLines(grid);
-	const newPiece = spawnPiece();
+	const { piece: newPiece, newSequenceIndex } = createNewPiece(gameState.sequenceIndex);
+	const gameOver = isColliding(clearedGrid, newPiece);
 
 	return {
 		...gameState,
 		grid: clearedGrid,
 		piece: newPiece,
+		sequenceIndex: newSequenceIndex,
+		playing: gameOver ? false : gameState.playing,
 	};
 }
 
@@ -188,7 +190,7 @@ io.on("connection", (socket) => {
 
 	socket.on("start", () => {
 		gameState = createInitialState();
-		const newPiece = spawnPiece();
+		const newPiece = createNewPiece(gameState.sequenceIndex).piece;
 
 		[gameState.playing, gameState.piece] = [true, newPiece];
 
