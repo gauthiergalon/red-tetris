@@ -155,7 +155,7 @@ export function Game() {
 			if (keys.has("down")) s?.emit("softDrop");
 			if (keys.has("left")) s?.emit("move", "left");
 			if (keys.has("right")) s?.emit("move", "right");
-		}, 200);
+		}, 150);
 		return () => clearInterval(interval);
 	}, []);
 
@@ -267,8 +267,8 @@ export function Game() {
 								style={{
 									width: "20px",
 									height: "20px",
-									backgroundColor: isGhost ? (COLORS[cellValue] ?? "#222") : (COLORS[cellValue] ?? "#222"),
-									opacity: isGhost ? 0.3 : 1,
+									backgroundColor: COLORS[cellValue] ?? "#222",
+									opacity: (isGhost && pieceChar === " ") ? 0.5 : 1,
 								}}
 							/>
 						);

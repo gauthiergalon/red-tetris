@@ -7,12 +7,13 @@ import type { Direction, GameState, Piece } from "./game.js";
 import {
 	clearLines,
 	createInitialState,
-	PIECES,
 	isColliding,
 	rotateShape,
 	isDirection,
 	DIRECTIONS,
 	getNextShape,
+	SRS_COMMON_TABLES,
+	SRS_I_TABLES,
 } from "./game.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -52,9 +53,12 @@ function setPiece(grid: string[][], piece: Piece): string[][] {
 }
 
 function createNewPiece(sequenceIndex: number): { piece: Piece; newSequenceIndex: number } {
+	const { shape, type } = getNextShape(sequenceIndex);
 	const newPiece: Piece = {
-		shape: getNextShape(sequenceIndex),
+		shape,
 		pos: { x: 3, y: 0 },
+		type,
+		rotationState: 0,
 	};
 	return { piece: newPiece, newSequenceIndex: sequenceIndex + 1 };
 }
@@ -88,13 +92,29 @@ function drop(gameState: GameState): GameState {
 function rotate(gameState: GameState): GameState {
 	if (!gameState.piece) return gameState;
 
-	const rotatedPiece = rotatePiece(gameState.piece);
+	const currentState = gameState.piece.rotationState;
+	const rotatedShape = rotateShape(gameState.piece.shape);
+	const isIPiece = gameState.piece.type === "I";
+	const tables = isIPiece ? SRS_I_TABLES : SRS_COMMON_TABLES;
+	const nextState = (currentState + 1) % 4;
+	const offsets = tables[currentState];
 
-	if (!isColliding(gameState.grid, rotatedPiece)) {
-		return {
-			...gameState,
-			piece: rotatedPiece,
+	for (const offset of offsets) {
+		const testPiece = {
+			...gameState.piece,
+			shape: rotatedShape,
+			pos: {
+				x: gameState.piece.pos.x + offset.x,
+				y: gameState.piece.pos.y + offset.y,
+			},
+			rotationState: nextState,
 		};
+		if (!isColliding(gameState.grid, testPiece)) {
+			return {
+				...gameState,
+				piece: testPiece,
+			};
+		}
 	}
 
 	return gameState;
