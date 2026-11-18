@@ -1,13 +1,14 @@
-import type { Direction, PieceType } from "../game.ts";
+import type { Direction, PieceType, RotationDirection } from "../game.ts";
 import { generateBag, penaltyFor } from "../game.ts";
 import { type ActionType, canAct } from "../throttle.ts";
 import { Player, type PlayerState, type StepResult } from "./Player.ts";
 
-export type GameStatus = "waiting" | "playing";
+/** waiting -> (host clicks Start) -> countdown -> playing -> waiting */
+export type GameStatus = "waiting" | "countdown" | "playing";
 
 export type PlayerAction =
 	| { type: "move"; direction: Direction }
-	| { type: "rotate" }
+	| { type: "rotate"; direction?: RotationDirection }
 	| { type: "softDrop" }
 	| { type: "hardDrop" }
 	/** Soft drop held (true) or released (false): replaces gravity speed. */
@@ -26,6 +27,7 @@ export interface PlayerSummary {
 	inGame: boolean;
 	/** False during the grace period after a disconnection. */
 	connected: boolean;
+	score: number;
 	spectrum: number[];
 }
 
@@ -34,6 +36,8 @@ export interface RoomSnapshot {
 	id: string;
 	status: GameStatus;
 	hostId: string | undefined;
+	/** Seconds left before the start, only during the countdown. */
+	countdown: number | null;
 	players: PlayerSummary[];
 }
 
@@ -60,6 +64,8 @@ export interface GameOptions {
 	random?: () => number;
 	/** Clock used by gravity and the action throttle; injectable for tests. */
 	now?: () => number;
+	/** Countdown between Start and the first piece (ms). 0 starts at once. */
+	countdownMs?: number;
 }
 
 /**
@@ -81,6 +87,10 @@ export class Game {
 	readonly #random: () => number;
 	readonly #listener: GameListener;
 	readonly #now: () => number;
+	readonly #countdownMs: number;
+	/** When the countdown ends (ms, server clock). */
+	#startsAt = 0;
+	#lastCountdown: number | null = null;
 
 	constructor(id: string, listener: GameListener, options: GameOptions = {}) {
 		this.id = id;
@@ -88,6 +98,7 @@ export class Game {
 		this.maxPlayers = options.maxPlayers ?? 8;
 		this.#random = options.random ?? Math.random;
 		this.#now = options.now ?? Date.now;
+		this.#countdownMs = options.countdownMs ?? 3_000;
 	}
 
 	get isPlaying(): boolean {
@@ -167,10 +178,31 @@ export class Game {
 		this.#checkEnd();
 	}
 
-	/** Starts a game. Only the host can do it, and only while waiting. */
+	/**
+	 * Starts the countdown. Only the host can do it, and only while waiting.
+	 * The game itself begins when the countdown ends (see tick).
+	 */
 	start(requesterId: string): boolean {
-		if (requesterId !== this.hostId || this.isPlaying) return false;
+		if (requesterId !== this.hostId || this.status !== "waiting") return false;
 
+		if (this.#countdownMs <= 0) {
+			this.#begin();
+			return true;
+		}
+
+		this.status = "countdown";
+		this.#startsAt = this.#now() + this.#countdownMs;
+		this.#lastCountdown = this.#countdownLeft();
+		this.#notifyRoom();
+		return true;
+	}
+
+	/** Seconds left in the countdown, rounded up (3, 2, 1, then 0). */
+	#countdownLeft(): number {
+		return Math.max(0, Math.ceil((this.#startsAt - this.#now()) / 1000));
+	}
+
+	#begin(): void {
 		this.#sequence = [];
 		this.#multiplayer = this.players.size > 1;
 		this.status = "playing";
@@ -184,7 +216,6 @@ export class Game {
 
 		this.#notifyRoom();
 		this.#checkEnd();
-		return true;
 	}
 
 	/** Applies a player's input. Returns true when something changed. */
@@ -205,7 +236,7 @@ export class Game {
 			case "move":
 				return this.#applyMove(player, player.move(action.direction));
 			case "rotate":
-				return this.#applyMove(player, player.rotate());
+				return this.#applyMove(player, player.rotate(action.direction));
 			case "softDrop":
 				return this.#applyMove(player, player.softDrop());
 			case "hardDrop":
@@ -219,6 +250,16 @@ export class Game {
 	 * drop is held. Soft drop replaces gravity, it does not add to it.
 	 */
 	tick(): void {
+		if (this.status === "countdown") {
+			const left = this.#countdownLeft();
+			if (left <= 0) this.#begin();
+			else if (left !== this.#lastCountdown) {
+				// Tell every player each time the displayed second changes.
+				this.#lastCountdown = left;
+				this.#notifyRoom();
+			}
+			return;
+		}
 		if (!this.isPlaying) return;
 		const now = this.#now();
 		for (const player of this.players.values()) {
@@ -236,12 +277,14 @@ export class Game {
 			id: this.id,
 			status: this.status,
 			hostId: this.hostId,
+			countdown: this.status === "countdown" ? this.#countdownLeft() : null,
 			players: [...this.players.values()].map((player) => ({
 				id: player.id,
 				username: player.username,
 				alive: player.alive,
 				inGame: player.inGame,
 				connected: player.connected,
+				score: player.score,
 				spectrum: player.spectrum,
 			})),
 		};

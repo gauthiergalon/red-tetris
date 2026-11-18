@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { createEmptyGrid, GRID_ROWS, SPAWN_POSITION } from "../game.ts";
+import { createEmptyGrid, GRID_ROWS, spawnPosition } from "../game.ts";
 import { Piece } from "./Piece.ts";
 
 describe("Piece", () => {
 	it("spawns at the spawn position with rotation 0", () => {
 		const piece = Piece.spawn("T");
 		expect(piece).toBeInstanceOf(Piece);
-		expect(piece.pos).toEqual(SPAWN_POSITION);
+		expect(piece.pos).toEqual(spawnPosition("T"));
 		expect(piece.rotationState).toBe(0);
 	});
 
@@ -14,13 +14,20 @@ describe("Piece", () => {
 		const piece = Piece.spawn("O");
 		const moved = piece.moved(createEmptyGrid(), "left");
 		expect(moved).not.toBe(piece);
-		expect(moved?.pos.x).toBe(SPAWN_POSITION.x - 1);
-		expect(piece.pos).toEqual(SPAWN_POSITION);
+		expect(moved?.pos.x).toBe(spawnPosition("O").x - 1);
+		expect(piece.pos).toEqual(spawnPosition("O"));
 	});
 
 	it("returns null when a move collides", () => {
 		const piece = new Piece("O", Piece.spawn("O").shape, { x: 0, y: 0 });
 		expect(piece.moved(createEmptyGrid(), "left")).toBeNull();
+	});
+
+	it("spawns like the official games: O in the middle, I on the top row", () => {
+		expect(Piece.spawn("O").pos).toEqual({ x: 4, y: 0 });
+		const i = Piece.spawn("I");
+		expect(i.collides(createEmptyGrid())).toBe(false);
+		expect(i.pos.y + 1).toBe(0); // the filled row of the I box is row 0
 	});
 
 	it("rotates, or returns null when blocked", () => {

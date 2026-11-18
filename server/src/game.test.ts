@@ -12,12 +12,16 @@ import {
 	getShape,
 	isColliding,
 	isDirection,
+	kicksFor,
+	LINE_CLEAR_SCORES,
+	lineClearScore,
 	mergePiece,
 	PENALTY_CELL,
 	PIECE_TYPES,
 	type PieceData,
 	penaltyFor,
 	rotateShape,
+	rotateShapeCounterClockwise,
 	rotateWithKicks,
 } from "./game.ts";
 
@@ -210,5 +214,76 @@ describe("isDirection", () => {
 		expect(isDirection("up")).toBe(false);
 		expect(isDirection("toString")).toBe(false);
 		expect(isDirection(42)).toBe(false);
+	});
+});
+
+describe("SRS (official rotation system)", () => {
+	it("rotates counter-clockwise, the inverse of clockwise", () => {
+		for (const type of PIECE_TYPES) {
+			const shape = getShape(type);
+			expect(rotateShapeCounterClockwise(rotateShape(shape))).toEqual(shape);
+		}
+		expect(rotateShapeCounterClockwise(getShape("T"))).toEqual([
+			[" ", "T", " "],
+			["T", "T", " "],
+			[" ", "T", " "],
+		]);
+	});
+
+	it("uses the official kick tables with y flipped for a y-down board", () => {
+		// Guideline 0->R for J, L, S, T, Z: (0,0) (-1,0) (-1,+1) (0,-2) (-1,-2)
+		// with y up. On our board, +1 up becomes -1.
+		expect(kicksFor("T", 0, "cw")).toEqual([
+			{ x: 0, y: 0 },
+			{ x: -1, y: 0 },
+			{ x: -1, y: -1 },
+			{ x: 0, y: 2 },
+			{ x: -1, y: 2 },
+		]);
+		// Guideline 0->R for I: (0,0) (-2,0) (+1,0) (-2,-1) (+1,+2).
+		expect(kicksFor("I", 0, "cw")[4]).toEqual({ x: 1, y: -2 });
+	});
+
+	it("derives counter-clockwise kicks: kicks(a->b) = -kicks(b->a)", () => {
+		for (const type of ["T", "I"] as const) {
+			for (let state = 0; state < 4; state++) {
+				const next = (state + 1) % 4;
+				const back = kicksFor(type, next, "ccw");
+				kicksFor(type, state, "cw").forEach((kick, i) => {
+					expect(back[i]).toEqual({ x: -kick.x || 0, y: -kick.y || 0 });
+				});
+			}
+		}
+		// Guideline 0->L for J, L, S, T, Z: (0,0) (+1,0) (+1,+1) (0,-2) (+1,-2).
+		expect(kicksFor("T", 0, "ccw")[2]).toEqual({ x: 1, y: -1 });
+	});
+
+	it("kicks a T up (not down) when rotating against the floor", () => {
+		// T in state 0 resting on the floor: rows 18-19, columns 4-6.
+		const t = { ...piece("T", 4, GRID_ROWS - 2) };
+		const result = rotateWithKicks(createEmptyGrid(), t, "cw");
+		// (0,0) and (-1,0) leave the R shape out of the board; the third test
+		// moves it one column left and one row UP.
+		expect(result?.pos).toEqual({ x: 3, y: GRID_ROWS - 3 });
+		expect(result?.rotationState).toBe(1);
+	});
+
+	it("rotates counter-clockwise to state L", () => {
+		const result = rotateWithKicks(createEmptyGrid(), piece("T", 3, 0), "ccw");
+		expect(result?.rotationState).toBe(3);
+	});
+
+	it("never rotates the O", () => {
+		expect(rotateWithKicks(createEmptyGrid(), piece("O", 4, 0))).toBeNull();
+	});
+});
+
+describe("lineClearScore", () => {
+	it("follows the guideline: 100 / 300 / 500 / 800", () => {
+		expect(LINE_CLEAR_SCORES).toEqual([0, 100, 300, 500, 800]);
+		expect(lineClearScore(0)).toBe(0);
+		expect(lineClearScore(2)).toBe(300);
+		expect(lineClearScore(4)).toBe(800);
+		expect(lineClearScore(9)).toBe(800);
 	});
 });

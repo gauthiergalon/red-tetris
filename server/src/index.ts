@@ -179,7 +179,10 @@ io.on("connection", (socket) => {
 		game.start(playerId);
 	});
 
-	socket.on("rotate", () => act({ type: "rotate" }));
+	// rotate() or rotate("cw") = clockwise, rotate("ccw") = counter-clockwise.
+	socket.on("rotate", (direction: unknown) =>
+		act({ type: "rotate", direction: direction === "ccw" ? "ccw" : "cw" }),
+	);
 	socket.on("hardDrop", () => act({ type: "hardDrop" }));
 	// softDrop(true/false) = key held/released; softDrop() = one row.
 	socket.on("softDrop", (active: unknown) => {

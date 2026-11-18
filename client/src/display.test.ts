@@ -3,6 +3,7 @@ import {
 	type GameResult,
 	getOpponents,
 	getStatusMessage,
+	isEliminated,
 	type PlayerSummary,
 	type RoomSnapshot,
 	spectrumToRows,
@@ -15,13 +16,14 @@ function player(id: string, patch: Partial<PlayerSummary> = {}): PlayerSummary {
 		alive: true,
 		inGame: true,
 		connected: true,
+		score: 0,
 		spectrum: [],
 		...patch,
 	};
 }
 
 function room(status: RoomSnapshot["status"], players: PlayerSummary[]) {
-	return { id: "r", status, hostId: "a", players };
+	return { id: "r", status, hostId: "a", countdown: null, players };
 }
 
 const win = (id: string): GameResult => ({ winner: { id, username: id } });
@@ -81,5 +83,24 @@ describe("getStatusMessage", () => {
 			player("c", { inGame: false, alive: false }),
 		]);
 		expect(getStatusMessage(r, null, "c")).toBe("Waiting for the next game");
+	});
+});
+
+describe("countdown and eliminated players", () => {
+	it("shows the same countdown to everyone, new players included", () => {
+		const r = {
+			...room("countdown", [player("a"), player("c", { inGame: false })]),
+			countdown: 2,
+		};
+		expect(getStatusMessage(r, null, "a")).toBe("Starting in 2");
+		expect(getStatusMessage(r, null, "c")).toBe("Starting in 2");
+	});
+
+	it("marks as eliminated only players who lost a game", () => {
+		expect(isEliminated(player("a", { alive: false }))).toBe(true);
+		expect(isEliminated(player("a"))).toBe(false);
+		expect(isEliminated(player("a", { alive: false, inGame: false }))).toBe(
+			false,
+		);
 	});
 });

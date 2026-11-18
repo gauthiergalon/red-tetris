@@ -1,10 +1,14 @@
-import type { Direction, Grid, PieceType } from "../game.ts";
+import type { Direction, Grid, PieceType, RotationDirection } from "../game.ts";
 import {
 	addPenaltyLines,
 	clearLines,
 	computeSpectrum,
 	createEmptyGrid,
+	getShape,
+	HARD_DROP_POINTS,
+	lineClearScore,
 	mergePiece,
+	SOFT_DROP_POINTS,
 } from "../game.ts";
 import type { ActionType } from "../throttle.ts";
 import { Piece } from "./Piece.ts";
@@ -27,7 +31,14 @@ export interface PlayerState {
 	grid: Grid;
 	piece: Piece | undefined;
 	playing: boolean;
+	score: number;
+	lines: number;
+	/** The next pieces of the sequence, in order. */
+	next: { type: PieceType; shape: string[][] }[];
 }
+
+/** How many upcoming pieces the client can see. */
+export const NEXT_QUEUE_SIZE = 3;
 
 const UNCHANGED: StepResult = { changed: false, locked: false, cleared: 0 };
 const MOVED: StepResult = { changed: true, locked: false, cleared: 0 };
@@ -55,6 +66,9 @@ export class Player {
 	lastFallAt = 0;
 	/** Last accepted time (ms) of each action type, for the throttle. */
 	lastActionAt: Partial<Record<ActionType, number>> = {};
+	score = 0;
+	/** Total number of lines cleared in the current game. */
+	lines = 0;
 	/** Index of the next piece to take from the game's sequence. */
 	sequenceIndex = 0;
 	readonly #pieceSource: PieceSource;
@@ -73,6 +87,8 @@ export class Player {
 	reset(): void {
 		this.grid = createEmptyGrid();
 		this.sequenceIndex = 0;
+		this.score = 0;
+		this.lines = 0;
 		this.alive = true;
 		this.inGame = true;
 		this.lastActionAt = {};
@@ -85,6 +101,9 @@ export class Player {
 			grid: this.grid,
 			piece: this.piece,
 			playing: gamePlaying && this.alive,
+			score: this.score,
+			lines: this.lines,
+			next: this.inGame ? this.nextPieces() : [],
 		};
 	}
 
@@ -96,9 +115,17 @@ export class Player {
 		return true;
 	}
 
-	rotate(): boolean {
+	/** Upcoming piece types, read from the game's sequence. */
+	nextPieces(count = NEXT_QUEUE_SIZE): PlayerState["next"] {
+		return Array.from({ length: count }, (_, i) => {
+			const type = this.#pieceSource(this.sequenceIndex + i);
+			return { type, shape: getShape(type) };
+		});
+	}
+
+	rotate(direction: RotationDirection = "cw"): boolean {
 		if (!this.alive || !this.piece) return false;
-		const next = this.piece.rotated(this.grid);
+		const next = this.piece.rotated(this.grid, direction);
 		if (!next) return false;
 		this.piece = next;
 		return true;
@@ -106,19 +133,26 @@ export class Player {
 
 	/** Moves down by one row. Never locks: locking happens on the next tick. */
 	softDrop(): boolean {
-		return this.move("down");
+		if (!this.move("down")) return false;
+		this.score += SOFT_DROP_POINTS;
+		return true;
 	}
 
 	/** Gravity: falls by one row, or locks the piece when it cannot fall. */
 	tick(): StepResult {
 		if (!this.alive || !this.piece) return UNCHANGED;
-		if (this.move("down")) return MOVED;
+		if (this.move("down")) {
+			if (this.softDropping) this.score += SOFT_DROP_POINTS;
+			return MOVED;
+		}
 		return this.#lock(this.piece);
 	}
 
 	hardDrop(): StepResult {
 		if (!this.alive || !this.piece) return UNCHANGED;
-		return this.#lock(this.piece.dropped(this.grid));
+		const dropped = this.piece.dropped(this.grid);
+		this.score += HARD_DROP_POINTS * (dropped.pos.y - this.piece.pos.y);
+		return this.#lock(dropped);
 	}
 
 	/**
@@ -153,6 +187,8 @@ export class Player {
 	#lock(piece: Piece): StepResult {
 		const { grid, cleared } = clearLines(mergePiece(this.grid, piece));
 		this.grid = grid;
+		this.lines += cleared;
+		this.score += lineClearScore(cleared);
 		this.#spawnNextPiece();
 		return { changed: true, locked: true, cleared };
 	}

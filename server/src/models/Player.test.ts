@@ -70,15 +70,15 @@ describe("Player", () => {
 
 		const lock = player.tick();
 		expect(lock.locked).toBe(true);
-		expect(player.grid[GRID_ROWS - 1][3]).toBe("O");
+		expect(player.grid[GRID_ROWS - 1][4]).toBe("O");
 		expect(player.sequenceIndex).toBe(2);
 	});
 
 	it("reports cleared lines on hard drop", () => {
 		const player = makePlayer();
-		// O spawns on columns 3 and 4: leave them free on the last two rows.
-		fillRow(player, GRID_ROWS - 1, [3, 4]);
-		fillRow(player, GRID_ROWS - 2, [3, 4]);
+		// O spawns on columns 4 and 5: leave them free on the last two rows.
+		fillRow(player, GRID_ROWS - 1, [4, 5]);
+		fillRow(player, GRID_ROWS - 2, [4, 5]);
 		const result = player.hardDrop();
 		expect(result).toEqual({ changed: true, locked: true, cleared: 2 });
 		expect(player.spectrum.every((h) => h === 0)).toBe(true);
@@ -124,5 +124,45 @@ describe("Player", () => {
 		const player = makePlayer();
 		player.receivePenalty(GRID_ROWS - 1);
 		expect(player.alive).toBe(false);
+	});
+});
+
+describe("Player: score and next pieces", () => {
+	it("scores hard drops (2 per row) and cleared lines", () => {
+		const player = makePlayer();
+		fillRow(player, GRID_ROWS - 1, [4, 5]);
+		fillRow(player, GRID_ROWS - 2, [4, 5]);
+		const rows = GRID_ROWS - 2; // the O falls from row 0 to row 18
+		player.hardDrop();
+		expect(player.lines).toBe(2);
+		expect(player.score).toBe(2 * rows + 300);
+	});
+
+	it("scores 1 per row of soft drop, not for gravity", () => {
+		const player = makePlayer();
+		player.tick();
+		expect(player.score).toBe(0);
+		player.softDrop();
+		expect(player.score).toBe(1);
+		player.softDropping = true;
+		player.tick();
+		expect(player.score).toBe(2);
+	});
+
+	it("shows the next pieces of the sequence and resets the score", () => {
+		const types: PieceType[] = ["T", "I", "L", "J", "S"];
+		const player = new Player("id", "bob", (i) => types[i % types.length]);
+		player.reset();
+		expect(player.toState(true).next.map((n) => n.type)).toEqual([
+			"I",
+			"L",
+			"J",
+		]);
+		player.hardDrop();
+		expect(player.toState(true).next[0].type).toBe("L");
+		expect(player.score).toBeGreaterThan(0);
+		player.reset();
+		expect(player.score).toBe(0);
+		expect(player.lines).toBe(0);
 	});
 });

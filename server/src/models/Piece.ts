@@ -4,6 +4,7 @@ import type {
 	PieceData,
 	PieceType,
 	Position,
+	RotationDirection,
 } from "../game.ts";
 import {
 	DIRECTIONS,
@@ -12,7 +13,7 @@ import {
 	isColliding,
 	offsetPosition,
 	rotateWithKicks,
-	SPAWN_POSITION,
+	spawnPosition,
 } from "../game.ts";
 
 /**
@@ -42,7 +43,7 @@ export class Piece implements PieceData {
 
 	/** A new piece of the given type at the spawn position. */
 	static spawn(type: PieceType): Piece {
-		return new Piece(type, getShape(type), { ...SPAWN_POSITION });
+		return new Piece(type, getShape(type), spawnPosition(type));
 	}
 
 	collides(grid: Grid): boolean {
@@ -67,8 +68,8 @@ export class Piece implements PieceData {
 	}
 
 	/** The rotated piece (SRS kicks included), or null when it cannot rotate. */
-	rotated(grid: Grid): Piece | null {
-		const result = rotateWithKicks(grid, this);
+	rotated(grid: Grid, direction: RotationDirection = "cw"): Piece | null {
+		const result = rotateWithKicks(grid, this, direction);
 		if (!result) return null;
 		return new Piece(this.type, result.shape, result.pos, result.rotationState);
 	}

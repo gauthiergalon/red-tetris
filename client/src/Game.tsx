@@ -4,6 +4,7 @@ import {
 	type GameResult,
 	getOpponents,
 	getStatusMessage,
+	isEliminated,
 	type RoomSnapshot,
 	spectrumToRows,
 } from "./display";
@@ -32,8 +33,38 @@ const GRID_ROWS = 20;
 export interface GameState {
 	piece: Piece | undefined;
 	grid: string[][];
-	lockDelay: number;
 	playing: boolean;
+	score: number;
+	lines: number;
+	next: { type: string; shape: string[][] }[];
+}
+
+/** A small preview of a piece shape (next queue). */
+function ShapePreview({ shape }: { shape: string[][] }) {
+	return (
+		<div
+			style={{
+				display: "grid",
+				gridTemplateColumns: `repeat(${shape[0]?.length ?? 0}, 12px)`,
+				gap: "1px",
+				marginBottom: 8,
+			}}
+		>
+			{shape.flatMap((row, y) =>
+				row.map((cell, x) => (
+					<div
+						// biome-ignore lint/suspicious/noArrayIndexKey: cells are fixed by position
+						key={`${y}-${x}`}
+						style={{
+							width: 12,
+							height: 12,
+							backgroundColor: cell === " " ? "transparent" : COLORS[cell],
+						}}
+					/>
+				)),
+			)}
+		</div>
+	);
 }
 
 export interface Piece {
@@ -51,8 +82,10 @@ export function Game({
 	const [gameState, setGameState] = useState<GameState>({
 		piece: undefined,
 		grid: Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(" ")),
-		lockDelay: 0,
 		playing: false,
+		score: 0,
+		lines: 0,
+		next: [],
 	});
 
 	const [socket, setSocket] = useState<Socket | null>(null);
@@ -100,7 +133,11 @@ export function Game({
 	}, [socket]);
 
 	const rotate = useCallback(() => {
-		socket?.emit("rotate");
+		socket?.emit("rotate", "cw");
+	}, [socket]);
+
+	const rotateBack = useCallback(() => {
+		socket?.emit("rotate", "ccw");
 	}, [socket]);
 
 	const moveLeft = useCallback(() => {
@@ -152,8 +189,10 @@ export function Game({
 			// Holding a key fires keydown again and again: ignore those.
 			if (e.repeat) return;
 
-			if (e.key === "ArrowUp") {
-				s?.emit("rotate");
+			if (e.key === "ArrowUp" || e.key === "x" || e.key === "X") {
+				s?.emit("rotate", "cw");
+			} else if (e.key === "z" || e.key === "Z") {
+				s?.emit("rotate", "ccw");
 			} else if (e.key === "ArrowLeft") {
 				stopRepeat("right");
 				startRepeat("left");
@@ -250,7 +289,7 @@ export function Game({
 	return (
 		<div>
 			<h2>
-				Tetris Game: {username}
+				Room: {roomId} | Player: {username}
 				{room && room.hostId === myId ? " (host)" : ""}
 			</h2>
 			<div
@@ -268,8 +307,11 @@ export function Game({
 				>
 					Start Game
 				</button>
+				<button type="button" onClick={rotateBack} disabled={isDisabled}>
+					Rotate ↺
+				</button>
 				<button type="button" onClick={rotate} disabled={isDisabled}>
-					Rotate
+					Rotate ↻
 				</button>
 				<button type="button" onClick={moveLeft} disabled={isDisabled}>
 					←
@@ -286,65 +328,75 @@ export function Game({
 				{gameState.playing && <span>Timer: {timer}s</span>}
 			</div>
 
-			<div
-				style={{
-					display: "grid",
-					gridTemplateColumns: `repeat(${GRID_COLS}, 20px)`,
-					gap: "1px",
-					marginTop: "10px",
-				}}
-			>
-				{gameState.grid.map((row, rowIndex) =>
-					row.map((cell, colIndex) => {
-						// Ghost/drop shadow
-						let ghostChar = " ";
-						if (gameState.piece && ghostY > (gameState.piece?.pos.y ?? 0)) {
-							const { shape } = gameState.piece;
-							for (let y = 0; y < shape.length; y++) {
-								for (let x = 0; x < shape[y].length; x++) {
-									if (
-										shape[y][x] !== " " &&
-										rowIndex === ghostY + y &&
-										colIndex === gameState.piece!.pos.x + x
-									) {
-										ghostChar = shape[y][x];
+			<div style={{ display: "flex", gap: 16, marginTop: 10 }}>
+				<div
+					style={{
+						display: "grid",
+						gridTemplateColumns: `repeat(${GRID_COLS}, 20px)`,
+						gap: "1px",
+					}}
+				>
+					{gameState.grid.map((row, rowIndex) =>
+						row.map((cell, colIndex) => {
+							// Ghost/drop shadow
+							let ghostChar = " ";
+							if (gameState.piece && ghostY > (gameState.piece?.pos.y ?? 0)) {
+								const { shape } = gameState.piece;
+								for (let y = 0; y < shape.length; y++) {
+									for (let x = 0; x < shape[y].length; x++) {
+										if (
+											shape[y][x] !== " " &&
+											rowIndex === ghostY + y &&
+											colIndex === gameState.piece!.pos.x + x
+										) {
+											ghostChar = shape[y][x];
+										}
 									}
 								}
 							}
-						}
 
-						let pieceChar = " ";
-						if (gameState.piece) {
-							const { shape, pos } = gameState.piece;
-							for (let y = 0; y < shape.length; y++) {
-								for (let x = 0; x < shape[y].length; x++) {
-									if (
-										shape[y][x] !== " " &&
-										rowIndex === pos.y + y &&
-										colIndex === pos.x + x
-									) {
-										pieceChar = shape[y][x];
+							let pieceChar = " ";
+							if (gameState.piece) {
+								const { shape, pos } = gameState.piece;
+								for (let y = 0; y < shape.length; y++) {
+									for (let x = 0; x < shape[y].length; x++) {
+										if (
+											shape[y][x] !== " " &&
+											rowIndex === pos.y + y &&
+											colIndex === pos.x + x
+										) {
+											pieceChar = shape[y][x];
+										}
 									}
 								}
 							}
-						}
-						const isGhost = ghostChar !== " ";
-						const cellValue =
-							pieceChar !== " " ? pieceChar : isGhost ? ghostChar : cell;
-						return (
-							<div
-								// biome-ignore lint/suspicious/noArrayIndexKey: grid cells are fixed by position
-								key={`${rowIndex}-${colIndex}`}
-								style={{
-									width: "20px",
-									height: "20px",
-									backgroundColor: COLORS[cellValue] ?? "#222",
-									opacity: isGhost && pieceChar === " " ? 0.5 : 1,
-								}}
-							/>
-						);
-					}),
-				)}
+							const isGhost = ghostChar !== " ";
+							const cellValue =
+								pieceChar !== " " ? pieceChar : isGhost ? ghostChar : cell;
+							return (
+								<div
+									// biome-ignore lint/suspicious/noArrayIndexKey: grid cells are fixed by position
+									key={`${rowIndex}-${colIndex}`}
+									style={{
+										width: "20px",
+										height: "20px",
+										backgroundColor: COLORS[cellValue] ?? "#222",
+										opacity: isGhost && pieceChar === " " ? 0.5 : 1,
+									}}
+								/>
+							);
+						}),
+					)}
+				</div>
+				<div>
+					<div>Score: {gameState.score}</div>
+					<div>Lines: {gameState.lines}</div>
+					<h4>Next</h4>
+					{gameState.next.map((piece, index) => (
+						// biome-ignore lint/suspicious/noArrayIndexKey: the queue order is the identity
+						<ShapePreview key={index} shape={piece.shape} />
+					))}
+				</div>
 			</div>
 
 			{statusMessage && <p>{statusMessage}</p>}
@@ -356,20 +408,23 @@ export function Game({
 				{opponents.map((opponent) => (
 					<div key={opponent.id}>
 						<div>
-							{opponent.username}
+							{opponent.username} ({opponent.score})
 							{opponent.id === room?.hostId ? " (host)" : ""}
 							{!opponent.connected ? " (disconnected)" : ""}
-							{!opponent.inGame
+							{!opponent.inGame && room?.status === "playing"
 								? " (waiting)"
 								: !opponent.alive && room?.status === "playing"
 									? " (out)"
 									: ""}
 						</div>
 						<div
+							aria-disabled={isEliminated(opponent)}
 							style={{
 								display: "grid",
 								gridTemplateColumns: `repeat(${GRID_COLS}, 6px)`,
 								gap: "1px",
+								// Eliminated: greyed out and red.
+								opacity: isEliminated(opponent) ? 0.5 : 1,
 							}}
 						>
 							{spectrumToRows(opponent.spectrum, GRID_ROWS).flatMap((row, y) =>
@@ -380,7 +435,13 @@ export function Game({
 										style={{
 											width: 6,
 											height: 6,
-											backgroundColor: filled ? "#aaa" : "#222",
+											backgroundColor: isEliminated(opponent)
+												? filled
+													? "#d33"
+													: "#411"
+												: filled
+													? "#aaa"
+													: "#222",
 										}}
 									/>
 								)),

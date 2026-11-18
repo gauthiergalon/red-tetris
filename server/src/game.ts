@@ -31,77 +31,118 @@ export const EMPTY_CELL = " ";
 /** Cell used for penalty lines. It blocks pieces but is never cleared. */
 export const PENALTY_CELL = "X";
 
-export const SPAWN_POSITION: Position = { x: 3, y: 0 };
+/**
+ * Spawn position (top-left of the bounding box), as in the official games:
+ * 3-wide pieces on columns 3-5, I on columns 3-6, O on columns 4-5. The I
+ * bounding box starts one row above the board so that the I appears on the
+ * top row (its first row is empty).
+ */
+export function spawnPosition(type: PieceType): Position {
+	if (type === "O") return { x: 4, y: 0 };
+	if (type === "I") return { x: 3, y: -1 };
+	return { x: 3, y: 0 };
+}
 
-export const SRS_COMMON_TABLES = [
-	// 0 -> 1
+export type RotationDirection = "cw" | "ccw";
+
+/**
+ * Official SRS wall kicks, copied as they appear in the guideline, where
+ * y points UP. Index = starting rotation state (0 = spawn, 1 = R, 2 = 2,
+ * 3 = L); these are the clockwise tests (0->R, R->2, 2->L, L->0).
+ *
+ * Counter-clockwise tests are not stored: in SRS, the kicks of a->b are the
+ * kicks of b->a with opposite signs.
+ *
+ * The board's y points DOWN, so kicksFor() flips the sign of y. Forgetting
+ * that flip makes every vertical kick go the wrong way.
+ */
+const SRS_JLSTZ_CW_KICKS = [
+	// 0 -> R
 	[
-		{ x: 0, y: 0 },
-		{ x: -1, y: 0 },
-		{ x: -1, y: 1 },
-		{ x: 0, y: -2 },
-		{ x: -1, y: -2 },
+		[0, 0],
+		[-1, 0],
+		[-1, 1],
+		[0, -2],
+		[-1, -2],
 	],
-	// 1 -> 2
+	// R -> 2
 	[
-		{ x: 0, y: 0 },
-		{ x: 1, y: 0 },
-		{ x: 1, y: -1 },
-		{ x: 0, y: 2 },
-		{ x: 1, y: 2 },
+		[0, 0],
+		[1, 0],
+		[1, -1],
+		[0, 2],
+		[1, 2],
 	],
-	// 2 -> 3
+	// 2 -> L
 	[
-		{ x: 0, y: 0 },
-		{ x: 1, y: 0 },
-		{ x: 1, y: 1 },
-		{ x: 0, y: -2 },
-		{ x: 1, y: -2 },
+		[0, 0],
+		[1, 0],
+		[1, 1],
+		[0, -2],
+		[1, -2],
 	],
-	// 3 -> 0
+	// L -> 0
 	[
-		{ x: 0, y: 0 },
-		{ x: -1, y: 0 },
-		{ x: -1, y: -1 },
-		{ x: 0, y: 2 },
-		{ x: -1, y: 2 },
+		[0, 0],
+		[-1, 0],
+		[-1, -1],
+		[0, 2],
+		[-1, 2],
 	],
 ];
 
-export const SRS_I_TABLES = [
-	// 0 -> 1
+const SRS_I_CW_KICKS = [
+	// 0 -> R
 	[
-		{ x: 0, y: 0 },
-		{ x: -2, y: 0 },
-		{ x: 1, y: 0 },
-		{ x: -2, y: -1 },
-		{ x: 1, y: 2 },
+		[0, 0],
+		[-2, 0],
+		[1, 0],
+		[-2, -1],
+		[1, 2],
 	],
-	// 1 -> 2
+	// R -> 2
 	[
-		{ x: 0, y: 0 },
-		{ x: -1, y: 0 },
-		{ x: 2, y: 0 },
-		{ x: -1, y: 2 },
-		{ x: 2, y: -1 },
+		[0, 0],
+		[-1, 0],
+		[2, 0],
+		[-1, 2],
+		[2, -1],
 	],
-	// 2 -> 3
+	// 2 -> L
 	[
-		{ x: 0, y: 0 },
-		{ x: 2, y: 0 },
-		{ x: -1, y: 0 },
-		{ x: 2, y: 1 },
-		{ x: -1, y: -2 },
+		[0, 0],
+		[2, 0],
+		[-1, 0],
+		[2, 1],
+		[-1, -2],
 	],
-	// 3 -> 0
+	// L -> 0
 	[
-		{ x: 0, y: 0 },
-		{ x: 1, y: 0 },
-		{ x: -2, y: 0 },
-		{ x: 1, y: -2 },
-		{ x: -2, y: 1 },
+		[0, 0],
+		[1, 0],
+		[-2, 0],
+		[1, -2],
+		[-2, 1],
 	],
 ];
+
+/**
+ * Kick offsets to test, in board coordinates (y down), for a rotation of
+ * `type` from rotation state `from` in `direction`.
+ */
+export function kicksFor(
+	type: PieceType,
+	from: number,
+	direction: RotationDirection,
+): Position[] {
+	const table = type === "I" ? SRS_I_CW_KICKS : SRS_JLSTZ_CW_KICKS;
+	if (direction === "cw") {
+		return table[from].map(([x, y]) => ({ x, y: -y || 0 }));
+	}
+	// ccw from `from` = reverse of cw from `from - 1`.
+	const previous = (from + 3) % 4;
+	return table[previous].map(([x, y]) => ({ x: -x || 0, y }));
+}
 
 export const DIRECTIONS = {
 	left: { x: -1, y: 0 },
@@ -233,6 +274,16 @@ export function addPenaltyLines(
 	};
 }
 
+/** Points for 0, 1, 2, 3 and 4 lines cleared at once (guideline, level 1). */
+export const LINE_CLEAR_SCORES = [0, 100, 300, 500, 800];
+/** Points per row for a soft drop and a hard drop (guideline). */
+export const SOFT_DROP_POINTS = 1;
+export const HARD_DROP_POINTS = 2;
+
+export function lineClearScore(cleared: number): number {
+	return LINE_CLEAR_SCORES[Math.max(0, Math.min(cleared, 4))];
+}
+
 /**
  * Number of penalty lines sent to each opponent when a player clears `cleared`
  * lines at once (n - 1, as required by the subject).
@@ -272,20 +323,20 @@ export function getShape(type: PieceType): string[][] {
 	return PIECES_SHAPES[type].map((row) => [...row]);
 }
 
+/** Clockwise rotation of a shape inside its bounding box. */
 export function rotateShape(shape: string[][]): string[][] {
-	const rotatedShape: string[][] = [];
 	const rows = shape.length;
+	return shape[0].map((_, x) =>
+		Array.from({ length: rows }, (_, k) => shape[rows - 1 - k][x]),
+	);
+}
+
+/** Counter-clockwise rotation of a shape inside its bounding box. */
+export function rotateShapeCounterClockwise(shape: string[][]): string[][] {
 	const cols = shape[0].length;
-
-	for (let x = 0; x < cols; x++) {
-		const newRow: string[] = [];
-		for (let y = rows - 1; y >= 0; y--) {
-			newRow.push(shape[y][x]);
-		}
-		rotatedShape.push(newRow);
-	}
-
-	return rotatedShape;
+	return Array.from({ length: cols }, (_, y) =>
+		shape.map((row) => row[cols - 1 - y]),
+	);
 }
 
 export function isDirection(value: unknown): value is Direction {
@@ -323,18 +374,25 @@ export function offsetPosition(
 }
 
 /**
- * Tries an SRS clockwise rotation. Returns the new shape, position and
- * rotation state, or null when every kick collides.
+ * Tries an SRS rotation: rotates the shape, then tests the 5 kick offsets in
+ * order and keeps the first position that fits. Returns null when none fits.
+ * The O piece never rotates (its shape and position would not change).
  */
 export function rotateWithKicks(
 	grid: Grid,
 	piece: PieceData,
+	direction: RotationDirection = "cw",
 ): Pick<PieceData, "shape" | "pos" | "rotationState"> | null {
-	const shape = rotateShape(piece.shape);
-	const rotationState = (piece.rotationState + 1) % 4;
-	const tables = piece.type === "I" ? SRS_I_TABLES : SRS_COMMON_TABLES;
+	if (piece.type === "O") return null;
 
-	for (const offset of tables[piece.rotationState]) {
+	const shape =
+		direction === "cw"
+			? rotateShape(piece.shape)
+			: rotateShapeCounterClockwise(piece.shape);
+	const rotationState =
+		(piece.rotationState + (direction === "cw" ? 1 : 3)) % 4;
+
+	for (const offset of kicksFor(piece.type, piece.rotationState, direction)) {
 		const candidate: PieceData = {
 			...piece,
 			shape,

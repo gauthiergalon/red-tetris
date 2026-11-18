@@ -31,6 +31,7 @@ function makeGame(maxPlayers = 8) {
 	const game = new Game("room", rec.listener, {
 		maxPlayers,
 		random: () => 0,
+		countdownMs: 0,
 		now: () => (time += 1000),
 	});
 	return { game, ...rec };
@@ -104,7 +105,9 @@ describe("Game: joining and hosting", () => {
 		expect(carol?.alive).toBe(true);
 		expect(carol?.inGame).toBe(true);
 		expect(carol?.piece).toBeDefined();
-		expect(game.handleAction("c", { type: "rotate" })).toBe(true);
+		expect(game.handleAction("c", { type: "move", direction: "left" })).toBe(
+			true,
+		);
 	});
 
 	it("gives the host role to the next player when the host leaves", () => {
@@ -188,10 +191,16 @@ describe("Game: actions and gravity", () => {
 		expect(game.handleAction("a", { type: "move", direction: "left" })).toBe(
 			true,
 		);
-		expect(game.handleAction("a", { type: "rotate" })).toBe(true);
-		expect(game.handleAction("a", { type: "softDrop" })).toBe(true);
+		// The first piece is an O: like in the official games, it never rotates.
+		expect(game.handleAction("a", { type: "rotate" })).toBe(false);
 		expect(game.handleAction("a", { type: "hardDrop" })).toBe(true);
-		expect(states.length).toBe(before + 4);
+		// The next one is a T.
+		expect(game.handleAction("a", { type: "rotate" })).toBe(true);
+		expect(game.handleAction("a", { type: "rotate", direction: "ccw" })).toBe(
+			true,
+		);
+		expect(game.handleAction("a", { type: "softDrop" })).toBe(true);
+		expect(states.length).toBe(before + 5);
 	});
 
 	it("makes pieces fall on tick, and does nothing when waiting", () => {
@@ -351,7 +360,10 @@ describe("Game: end of game", () => {
 describe("Game: server-side action limit", () => {
 	it("refuses an action repeated too fast, accepts it after the delay", () => {
 		let time = 0;
-		const game = new Game("room", recorder().listener, { now: () => time });
+		const game = new Game("room", recorder().listener, {
+			now: () => time,
+			countdownMs: 0,
+		});
 		game.join("a", "alice");
 		game.start("a");
 
@@ -363,7 +375,7 @@ describe("Game: server-side action limit", () => {
 			false,
 		);
 		// Another action type has its own delay.
-		expect(game.handleAction("a", { type: "rotate" })).toBe(true);
+		expect(game.handleAction("a", { type: "softDrop" })).toBe(true);
 		time += 100;
 		expect(game.handleAction("a", { type: "move", direction: "left" })).toBe(
 			true,
@@ -376,6 +388,7 @@ describe("Game: gravity and soft drop", () => {
 		const clock = { time: 0 };
 		const game = new Game("room", recorder().listener, {
 			now: () => clock.time,
+			countdownMs: 0,
 		});
 		game.join("a", "alice");
 		game.start("a");
@@ -466,5 +479,37 @@ describe("Game: reconnection grace period", () => {
 		game.leave("a");
 		expect(game.hostId).toBe("b");
 		game.disconnect("unknown");
+	});
+});
+
+describe("Game: countdown before the start", () => {
+	it("counts down 3, 2, 1 for the whole room, then starts", () => {
+		const rec = recorder();
+		const clock = { time: 0 };
+		const game = new Game("room", rec.listener, { now: () => clock.time });
+		game.join("a", "alice");
+		game.join("b", "bob");
+
+		expect(game.start("a")).toBe(true);
+		expect(game.status).toBe("countdown");
+		expect(rec.rooms.at(-1)?.countdown).toBe(3);
+		expect(game.handleAction("a", { type: "hardDrop" })).toBe(false);
+		expect(game.start("a")).toBe(false);
+
+		clock.time = 1000;
+		game.tick();
+		expect(rec.rooms.at(-1)?.countdown).toBe(2);
+		clock.time = 1500;
+		const updates = rec.rooms.length;
+		game.tick();
+		expect(rec.rooms.length).toBe(updates); // same second: no new update
+
+		// Someone joining during the countdown plays too.
+		game.join("c", "carol");
+		clock.time = 3000;
+		game.tick();
+		expect(game.status).toBe("playing");
+		expect(rec.rooms.at(-1)?.countdown).toBeNull();
+		expect(game.players.get("c")?.alive).toBe(true);
 	});
 });

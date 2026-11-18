@@ -6,13 +6,16 @@ export interface PlayerSummary {
 	alive: boolean;
 	inGame: boolean;
 	connected: boolean;
+	score: number;
 	spectrum: number[];
 }
 
 export interface RoomSnapshot {
 	id: string;
-	status: "waiting" | "playing";
+	status: "waiting" | "countdown" | "playing";
 	hostId: string | undefined;
+	/** Seconds left before the start, only during the countdown. */
+	countdown: number | null;
 	players: PlayerSummary[];
 }
 
@@ -38,16 +41,23 @@ export function getOpponents(
 	return room?.players.filter((player) => player.id !== myId) ?? [];
 }
 
+/** A player who took part in the game and lost it. */
+export function isEliminated(player: PlayerSummary): boolean {
+	return player.inGame && !player.alive;
+}
+
 export type StatusMessage =
 	| "Victory"
 	| "Game Over"
-	| "Waiting for the next game";
+	| "Waiting for the next game"
+	| `Starting in ${number}`;
 
 /**
  * What to show under my board:
  * - "Victory" if I am the winner of the last game,
  * - "Game Over" if I lost (dead during the game, or another player won),
  * - "Waiting for the next game" if I joined while a game was running,
+ * - "Starting in N" during the countdown (same N for everyone),
  * - null before the first game and while I am playing.
  */
 export function getStatusMessage(
@@ -57,6 +67,7 @@ export function getStatusMessage(
 ): StatusMessage | null {
 	const me = room?.players.find((player) => player.id === myId);
 	if (!room || !me) return null;
+	if (room.status === "countdown") return `Starting in ${room.countdown ?? 0}`;
 	if (!me.inGame)
 		return room.status === "playing" ? "Waiting for the next game" : null;
 	if (room.status === "playing") return me.alive ? null : "Game Over";
