@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,7 +14,10 @@ const PORT = Number(process.env.PORT ?? 3000);
 const MAX_ROOMS = 1_000;
 const MAX_PLAYERS_PER_ROOM = 8;
 const MAX_GAME_EVENTS_PER_SECOND = 30;
-const TICK_MS = 500;
+/** How often the server runs gravity; each player has its own fall delay. */
+const TICK_MS = 25;
+/** A disconnected player keeps its place this long (ms). */
+const RECONNECT_GRACE_MS = 5_000;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -43,6 +47,9 @@ interface RateLimitWindow {
 
 const rateLimitWindows = new Map<string, RateLimitWindow>();
 
+/** Pending removals of disconnected players, by player id. */
+const graceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
 // -----------------------------------------------------------------------------
 // Rate limiting
 // -----------------------------------------------------------------------------
@@ -64,12 +71,18 @@ function canProcessAction(socketId: string): boolean {
 
 // -----------------------------------------------------------------------------
 // Game <-> socket.io bridge
+//
+// A player's id is stable (it survives a reconnection), unlike socket.id.
+// Each socket joins a socket.io room named after its player id, and the
+// player's own messages are sent to that room.
 // -----------------------------------------------------------------------------
+
+const playerRoom = (playerId: string): string => `player:${playerId}`;
 
 function createSocketListener(roomId: string): GameListener {
 	return {
 		playerState: (playerId, state) => {
-			io.to(playerId).emit("gameState", state);
+			io.to(playerRoom(playerId)).emit("gameState", state);
 		},
 		roomUpdate: (snapshot) => {
 			io.to(roomId).emit("room", snapshot);
@@ -132,11 +145,11 @@ io.on("connection", (socket) => {
 		return;
 	}
 
-	// Join the socket.io room first, so this socket receives the room update
-	// sent by game.join().
+	// Join the socket.io rooms first, so this socket receives the updates
+	// sent by game.join(). The player room is joined once the id is known.
 	socket.join(roomId);
 
-	const joined = game.join(socket.id, username);
+	const joined = game.join(randomUUID(), username);
 
 	if (!joined.ok) {
 		if (game.isEmpty) games.delete(roomId);
@@ -144,19 +157,35 @@ io.on("connection", (socket) => {
 		return;
 	}
 
+	const playerId = joined.player.id;
+
+	// Reconnection within the grace period: cancel the pending removal.
+	clearTimeout(graceTimers.get(playerId));
+	graceTimers.delete(playerId);
+
+	socket.join(playerRoom(playerId));
+	socket.emit("welcome", { playerId });
+	// Send the state again now that this socket is in the player room.
+	socket.emit("gameState", joined.player.toState(game.isPlaying));
+	socket.emit("room", game.snapshot());
+
 	const act = (action: PlayerAction): void => {
 		if (!canProcessAction(socket.id)) return;
-		game.handleAction(socket.id, action);
+		game.handleAction(playerId, action);
 	};
 
 	socket.on("start", () => {
 		if (!canProcessAction(socket.id)) return;
-		game.start(socket.id);
+		game.start(playerId);
 	});
 
 	socket.on("rotate", () => act({ type: "rotate" }));
-	socket.on("softDrop", () => act({ type: "softDrop" }));
 	socket.on("hardDrop", () => act({ type: "hardDrop" }));
+	// softDrop(true/false) = key held/released; softDrop() = one row.
+	socket.on("softDrop", (active: unknown) => {
+		if (typeof active === "boolean") act({ type: "setSoftDrop", active });
+		else act({ type: "softDrop" });
+	});
 	socket.on("move", (direction: unknown) => {
 		if (!isDirection(direction)) return;
 		act({ type: "move", direction });
@@ -164,8 +193,15 @@ io.on("connection", (socket) => {
 
 	socket.on("disconnect", () => {
 		rateLimitWindows.delete(socket.id);
-		game.leave(socket.id);
-		if (game.isEmpty) games.delete(roomId);
+		game.disconnect(playerId);
+		graceTimers.set(
+			playerId,
+			setTimeout(() => {
+				graceTimers.delete(playerId);
+				game.leave(playerId);
+				if (game.isEmpty) games.delete(roomId);
+			}, RECONNECT_GRACE_MS),
+		);
 	});
 });
 
@@ -183,6 +219,7 @@ function cleanup(): void {
 	if (isShuttingDown) return;
 	isShuttingDown = true;
 	clearInterval(tickInterval);
+	for (const timer of graceTimers.values()) clearTimeout(timer);
 	io.close();
 }
 

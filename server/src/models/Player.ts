@@ -47,6 +47,12 @@ export class Player {
 	alive = false;
 	/** True once the player took part in a game (false while waiting). */
 	inGame = false;
+	/** False during the grace period after a disconnection. */
+	connected = true;
+	/** True while the soft drop key is held. */
+	softDropping = false;
+	/** Time (ms) of the last gravity step. */
+	lastFallAt = 0;
 	/** Last accepted time (ms) of each action type, for the throttle. */
 	lastActionAt: Partial<Record<ActionType, number>> = {};
 	/** Index of the next piece to take from the game's sequence. */
@@ -70,6 +76,7 @@ export class Player {
 		this.alive = true;
 		this.inGame = true;
 		this.lastActionAt = {};
+		this.softDropping = false;
 		this.#spawnNextPiece();
 	}
 

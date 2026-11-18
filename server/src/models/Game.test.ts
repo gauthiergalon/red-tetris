@@ -4,7 +4,9 @@ import {
 	Game,
 	type GameListener,
 	type GameResult,
+	GRAVITY_MS,
 	type RoomSnapshot,
+	SOFT_DROP_MS,
 } from "./Game.ts";
 import type { PlayerState } from "./Player.ts";
 
@@ -366,5 +368,103 @@ describe("Game: server-side action limit", () => {
 		expect(game.handleAction("a", { type: "move", direction: "left" })).toBe(
 			true,
 		);
+	});
+});
+
+describe("Game: gravity and soft drop", () => {
+	function clockGame() {
+		const clock = { time: 0 };
+		const game = new Game("room", recorder().listener, {
+			now: () => clock.time,
+		});
+		game.join("a", "alice");
+		game.start("a");
+		const y = () => game.players.get("a")?.piece?.pos.y ?? -1;
+		return { game, clock, y };
+	}
+
+	it("makes the piece fall once per GRAVITY_MS, however often tick runs", () => {
+		const { game, clock, y } = clockGame();
+		const start = y();
+		for (let t = 25; t < GRAVITY_MS; t += 25) {
+			clock.time = t;
+			game.tick();
+		}
+		expect(y()).toBe(start);
+		clock.time = GRAVITY_MS;
+		game.tick();
+		expect(y()).toBe(start + 1);
+	});
+
+	it("replaces gravity by SOFT_DROP_MS while held, without adding to it", () => {
+		const { game, clock, y } = clockGame();
+		const start = y();
+		// Pressing falls immediately.
+		expect(game.handleAction("a", { type: "setSoftDrop", active: true })).toBe(
+			true,
+		);
+		expect(y()).toBe(start + 1);
+		// Then exactly one row per SOFT_DROP_MS.
+		for (let i = 1; i <= 4; i++) {
+			clock.time = i * SOFT_DROP_MS;
+			game.tick();
+		}
+		expect(y()).toBe(start + 5);
+		// Pressing again changes nothing.
+		expect(game.handleAction("a", { type: "setSoftDrop", active: true })).toBe(
+			false,
+		);
+		// Released: back to normal gravity, counted from the release.
+		game.handleAction("a", { type: "setSoftDrop", active: false });
+		clock.time += GRAVITY_MS - 1;
+		game.tick();
+		expect(y()).toBe(start + 5);
+		clock.time += 1;
+		game.tick();
+		expect(y()).toBe(start + 6);
+	});
+});
+
+describe("Game: reconnection grace period", () => {
+	it("keeps the player, its board and its host role while disconnected", () => {
+		const { game, rooms } = makeGame();
+		game.join("a", "alice");
+		game.join("b", "bob");
+		game.start("a");
+		game.handleAction("a", { type: "hardDrop" });
+		const board = getPlayer(game, "a").grid;
+
+		game.disconnect("a");
+		expect(game.hostId).toBe("a");
+		expect(rooms.at(-1)?.players.find((p) => p.id === "a")?.connected).toBe(
+			false,
+		);
+
+		const result = game.join("new-socket-id", "alice");
+		expect(result).toMatchObject({ ok: true, resumed: true });
+		expect(result.ok && result.player.id).toBe("a");
+		expect(getPlayer(game, "a").grid).toBe(board);
+		expect(getPlayer(game, "a").connected).toBe(true);
+		expect(game.players.size).toBe(2);
+	});
+
+	it("refuses a username already used by a connected player", () => {
+		const { game } = makeGame();
+		game.join("a", "alice");
+		expect(game.join("x", "alice")).toEqual({
+			ok: false,
+			reason: "This username is already taken here.",
+		});
+	});
+
+	it("transfers the host only when the player really leaves", () => {
+		const { game } = makeGame();
+		game.join("a", "alice");
+		game.join("b", "bob");
+		game.disconnect("a");
+		expect(game.hostId).toBe("a");
+		game.leave("a");
+		expect(game.hostId).toBe("b");
+		game.disconnect("unknown");
 	});
 });

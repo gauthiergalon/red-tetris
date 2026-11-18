@@ -5,6 +5,7 @@ export interface PlayerSummary {
 	username: string;
 	alive: boolean;
 	inGame: boolean;
+	connected: boolean;
 	spectrum: number[];
 }
 

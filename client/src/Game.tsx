@@ -21,6 +21,11 @@ const COLORS: Record<string, string> = {
 	X: "#777",
 };
 
+/** Delay before a held left/right key starts repeating (ms). */
+const DAS_MS = 170;
+/** Delay between two repeated moves while the key stays held (ms). */
+const ARR_MS = 60;
+
 const GRID_COLS = 10;
 const GRID_ROWS = 20;
 
@@ -57,7 +62,10 @@ export function Game({
 	const [connectionError, setConnectionError] = useState<string | null>(null);
 	const socketRef = useRef(socket);
 	const gameStateRef = useRef(gameState);
-	const pressedKeysRef = useRef(new Set<string>());
+	// Auto-repeat timers of the held horizontal keys.
+	const repeatTimersRef = useRef(
+		new Map<"left" | "right", ReturnType<typeof setTimeout>>(),
+	);
 
 	useEffect(() => {
 		socketRef.current = socket;
@@ -112,6 +120,25 @@ export function Game({
 	}, [socket]);
 
 	useEffect(() => {
+		const timers = repeatTimersRef.current;
+
+		// One move on press, then auto-repeat only once the key has been held
+		// for DAS_MS (like the official games). Before, a shared 150 ms timer
+		// could fire right after the press and move the piece twice.
+		const startRepeat = (direction: "left" | "right") => {
+			socketRef.current?.emit("move", direction);
+			const repeat = () => {
+				socketRef.current?.emit("move", direction);
+				timers.set(direction, setTimeout(repeat, ARR_MS));
+			};
+			timers.set(direction, setTimeout(repeat, DAS_MS));
+		};
+
+		const stopRepeat = (direction: "left" | "right") => {
+			clearTimeout(timers.get(direction));
+			timers.delete(direction);
+		};
+
 		const handleKeyDown = (e: KeyboardEvent) => {
 			const s = socketRef.current;
 			const currentState = gameStateRef.current;
@@ -122,49 +149,48 @@ export function Game({
 			) {
 				e.preventDefault();
 			}
+			// Holding a key fires keydown again and again: ignore those.
+			if (e.repeat) return;
 
-			if (e.key === "ArrowUp" && !e.repeat) {
+			if (e.key === "ArrowUp") {
 				s?.emit("rotate");
-			} else if (e.key === "ArrowLeft" && !e.repeat) {
-				s?.emit("move", "left");
-				pressedKeysRef.current.add("left");
-			} else if (e.key === "ArrowRight" && !e.repeat) {
-				s?.emit("move", "right");
-				pressedKeysRef.current.add("right");
-			} else if (e.key === "ArrowDown" && !e.repeat) {
-				s?.emit("softDrop");
-				pressedKeysRef.current.add("down");
+			} else if (e.key === "ArrowLeft") {
+				stopRepeat("right");
+				startRepeat("left");
+			} else if (e.key === "ArrowRight") {
+				stopRepeat("left");
+				startRepeat("right");
+			} else if (e.key === "ArrowDown") {
+				// Held: the server makes the piece fall faster instead of gravity.
+				s?.emit("softDrop", true);
 			} else if (e.key === " ") {
 				s?.emit("hardDrop");
 			}
 		};
 
 		const handleKeyUp = (e: KeyboardEvent) => {
-			if (e.key === "ArrowLeft") pressedKeysRef.current.delete("left");
-			if (e.key === "ArrowRight") pressedKeysRef.current.delete("right");
-			if (e.key === "ArrowDown") pressedKeysRef.current.delete("down");
+			if (e.key === "ArrowLeft") stopRepeat("left");
+			if (e.key === "ArrowRight") stopRepeat("right");
+			if (e.key === "ArrowDown") socketRef.current?.emit("softDrop", false);
+		};
+
+		// Releasing a key outside the window never fires keyup.
+		const handleBlur = () => {
+			stopRepeat("left");
+			stopRepeat("right");
+			socketRef.current?.emit("softDrop", false);
 		};
 
 		window.addEventListener("keydown", handleKeyDown);
 		window.addEventListener("keyup", handleKeyUp);
+		window.addEventListener("blur", handleBlur);
 		return () => {
 			window.removeEventListener("keydown", handleKeyDown);
 			window.removeEventListener("keyup", handleKeyUp);
+			window.removeEventListener("blur", handleBlur);
+			stopRepeat("left");
+			stopRepeat("right");
 		};
-	}, []);
-
-	useEffect(() => {
-		const interval = setInterval(() => {
-			const s = socketRef.current;
-			const currentState = gameStateRef.current;
-			if (!currentState.playing || !currentState.piece) return;
-
-			const keys = pressedKeysRef.current;
-			if (keys.has("down")) s?.emit("softDrop");
-			if (keys.has("left")) s?.emit("move", "left");
-			if (keys.has("right")) s?.emit("move", "right");
-		}, 150);
-		return () => clearInterval(interval);
 	}, []);
 
 	// Drop shadow / ghost piece calculation
@@ -205,7 +231,7 @@ export function Game({
 	useEffect(() => {
 		const s = io({ auth: { roomId, username } });
 		setSocket(s);
-		s.on("connect", () => setMyId(s.id));
+		s.on("welcome", (info: { playerId: string }) => setMyId(info.playerId));
 		s.on("gameState", (state: GameState) => setGameState(state));
 		s.on("room", (snapshot: RoomSnapshot) => {
 			setRoom(snapshot);
@@ -332,6 +358,7 @@ export function Game({
 						<div>
 							{opponent.username}
 							{opponent.id === room?.hostId ? " (host)" : ""}
+							{!opponent.connected ? " (disconnected)" : ""}
 							{!opponent.inGame
 								? " (waiting)"
 								: !opponent.alive && room?.status === "playing"

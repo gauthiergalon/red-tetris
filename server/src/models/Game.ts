@@ -9,7 +9,14 @@ export type PlayerAction =
 	| { type: "move"; direction: Direction }
 	| { type: "rotate" }
 	| { type: "softDrop" }
-	| { type: "hardDrop" };
+	| { type: "hardDrop" }
+	/** Soft drop held (true) or released (false): replaces gravity speed. */
+	| { type: "setSoftDrop"; active: boolean };
+
+/** Delay between two gravity steps (ms). */
+export const GRAVITY_MS = 500;
+/** Delay between two steps while soft drop is held (ms). */
+export const SOFT_DROP_MS = 50;
 
 export interface PlayerSummary {
 	id: string;
@@ -17,6 +24,8 @@ export interface PlayerSummary {
 	alive: boolean;
 	/** False for a player who joined during the game and waits for the next. */
 	inGame: boolean;
+	/** False during the grace period after a disconnection. */
+	connected: boolean;
 	spectrum: number[];
 }
 
@@ -43,13 +52,13 @@ export interface GameListener {
 }
 
 export type JoinResult =
-	| { ok: true; player: Player }
+	| { ok: true; player: Player; resumed: boolean }
 	| { ok: false; reason: string };
 
 export interface GameOptions {
 	maxPlayers?: number;
 	random?: () => number;
-	/** Clock used by the action throttle; injectable for tests. */
+	/** Clock used by gravity and the action throttle; injectable for tests. */
 	now?: () => number;
 }
 
@@ -100,8 +109,22 @@ export class Game {
 	/**
 	 * Adds a player. During a game the player is accepted but waits: it is not
 	 * alive and not in the game, and takes part in the next start.
+	 *
+	 * If a disconnected player with the same username is still in its grace
+	 * period, it gets its place back instead (`resumed: true`).
 	 */
 	join(id: string, username: string): JoinResult {
+		const existing = this.#findByUsername(username);
+		if (existing?.connected) {
+			return { ok: false, reason: "This username is already taken here." };
+		}
+		if (existing) {
+			existing.connected = true;
+			this.#sendState(existing);
+			this.#notifyRoom();
+			return { ok: true, player: existing, resumed: true };
+		}
+
 		if (this.players.size >= this.maxPlayers) {
 			return { ok: false, reason: "This room is full." };
 		}
@@ -112,7 +135,19 @@ export class Game {
 
 		this.#listener.playerState(id, player.toState(false));
 		this.#notifyRoom();
-		return { ok: true, player };
+		return { ok: true, player, resumed: false };
+	}
+
+	/**
+	 * Start of the grace period: the player keeps its place (and its host
+	 * role) until it reconnects or `leave` is called.
+	 */
+	disconnect(id: string): void {
+		const player = this.players.get(id);
+		if (!player) return;
+		player.connected = false;
+		player.softDropping = false;
+		this.#notifyRoom();
 	}
 
 	leave(id: string): void {
@@ -140,8 +175,10 @@ export class Game {
 		this.#multiplayer = this.players.size > 1;
 		this.status = "playing";
 
+		const now = this.#now();
 		for (const player of this.players.values()) {
 			player.reset();
+			player.lastFallAt = now;
 			this.#listener.playerState(player.id, player.toState(true));
 		}
 
@@ -154,6 +191,10 @@ export class Game {
 	handleAction(playerId: string, action: PlayerAction): boolean {
 		const player = this.players.get(playerId);
 		if (!this.isPlaying || !player?.alive) return false;
+
+		if (action.type === "setSoftDrop") {
+			return this.#setSoftDrop(player, action.active);
+		}
 
 		// Server-side limit: each action type has a minimum interval.
 		const now = this.#now();
@@ -172,12 +213,21 @@ export class Game {
 		}
 	}
 
-	/** Gravity step for every living player. */
+	/**
+	 * Gravity. Called often (every few ms); each player falls by one row when
+	 * its own delay has passed: GRAVITY_MS normally, SOFT_DROP_MS while soft
+	 * drop is held. Soft drop replaces gravity, it does not add to it.
+	 */
 	tick(): void {
 		if (!this.isPlaying) return;
+		const now = this.#now();
 		for (const player of this.players.values()) {
 			if (!this.isPlaying) return;
-			if (player.alive) this.#applyStep(player, player.tick());
+			if (!player.alive) continue;
+			const delay = player.softDropping ? SOFT_DROP_MS : GRAVITY_MS;
+			if (now - player.lastFallAt < delay) continue;
+			player.lastFallAt = now;
+			this.#applyStep(player, player.tick());
 		}
 	}
 
@@ -191,9 +241,26 @@ export class Game {
 				username: player.username,
 				alive: player.alive,
 				inGame: player.inGame,
+				connected: player.connected,
 				spectrum: player.spectrum,
 			})),
 		};
+	}
+
+	#findByUsername(username: string): Player | undefined {
+		for (const player of this.players.values()) {
+			if (player.username === username) return player;
+		}
+		return undefined;
+	}
+
+	#setSoftDrop(player: Player, active: boolean): boolean {
+		if (player.softDropping === active) return false;
+		player.softDropping = active;
+		// Pressing: fall right away. Releasing: gravity restarts from now.
+		player.lastFallAt = this.#now();
+		if (active) return this.#applyStep(player, player.tick());
+		return false;
 	}
 
 	#applyMove(player: Player, changed: boolean): boolean {

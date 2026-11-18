@@ -14,6 +14,7 @@ function player(id: string, patch: Partial<PlayerSummary> = {}): PlayerSummary {
 		username: id,
 		alive: true,
 		inGame: true,
+		connected: true,
 		spectrum: [],
 		...patch,
 	};
