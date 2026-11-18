@@ -1,7 +1,6 @@
 import { type FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-/** Home page: how to play, the controls, and a form to join a room. */
 export function Home() {
 	const navigate = useNavigate();
 	const [room, setRoom] = useState("");

@@ -16,13 +16,6 @@ import {
 	spawnPosition,
 } from "../game.ts";
 
-/**
- * A falling tetromino.
- *
- * Instances are immutable: every move returns a new Piece. The class only
- * wraps the pure functions of game.ts. Its own fields (type, shape, pos,
- * rotationState) are what socket.io sends to the client.
- */
 export class Piece implements PieceData {
 	readonly type: PieceType;
 	readonly shape: string[][];
@@ -41,7 +34,6 @@ export class Piece implements PieceData {
 		this.rotationState = rotationState;
 	}
 
-	/** A new piece of the given type at the spawn position. */
 	static spawn(type: PieceType): Piece {
 		return new Piece(type, getShape(type), spawnPosition(type));
 	}
@@ -50,7 +42,6 @@ export class Piece implements PieceData {
 		return isColliding(grid, this);
 	}
 
-	/** Same piece shifted by (dx, dy), without any collision check. */
 	translated(dx: number, dy: number): Piece {
 		return new Piece(
 			this.type,
@@ -60,21 +51,18 @@ export class Piece implements PieceData {
 		);
 	}
 
-	/** The moved piece, or null when the move collides. */
 	moved(grid: Grid, direction: Direction): Piece | null {
 		const { x, y } = DIRECTIONS[direction];
 		const next = this.translated(x, y);
 		return next.collides(grid) ? null : next;
 	}
 
-	/** The rotated piece (SRS kicks included), or null when it cannot rotate. */
 	rotated(grid: Grid, direction: RotationDirection = "cw"): Piece | null {
 		const result = rotateWithKicks(grid, this, direction);
 		if (!result) return null;
 		return new Piece(this.type, result.shape, result.pos, result.rotationState);
 	}
 
-	/** The piece moved as low as it can go. */
 	dropped(grid: Grid): Piece {
 		const pos = dropPosition(grid, this);
 		return new Piece(this.type, this.shape, pos, this.rotationState);

@@ -1,11 +1,3 @@
-// -----------------------------------------------------------------------------
-// Pure Tetris engine.
-//
-// Every function in this file is pure: it never mutates its arguments and never
-// reads global mutable state. The server classes (Game, Player, Piece) call
-// these functions; that keeps the rules easy to test in isolation.
-// -----------------------------------------------------------------------------
-
 export type Grid = string[][];
 
 export type PieceType = "I" | "O" | "T" | "S" | "Z" | "J" | "L";
@@ -15,7 +7,6 @@ export interface Position {
 	y: number;
 }
 
-/** Plain data describing a piece. The `Piece` class implements it. */
 export interface PieceData {
 	shape: string[][];
 	pos: Position;
@@ -28,15 +19,8 @@ export const GRID_ROWS = 20;
 
 export const EMPTY_CELL = " ";
 
-/** Cell used for penalty lines. It blocks pieces but is never cleared. */
 export const PENALTY_CELL = "X";
 
-/**
- * Spawn position (top-left of the bounding box), as in the official games:
- * 3-wide pieces on columns 3-5, I on columns 3-6, O on columns 4-5. The I
- * bounding box starts one row above the board so that the I appears on the
- * top row (its first row is empty).
- */
 export function spawnPosition(type: PieceType): Position {
 	if (type === "O") return { x: 4, y: 0 };
 	if (type === "I") return { x: 3, y: -1 };
@@ -45,19 +29,9 @@ export function spawnPosition(type: PieceType): Position {
 
 export type RotationDirection = "cw" | "ccw";
 
-/**
- * Official SRS wall kicks, copied as they appear in the guideline, where
- * y points UP. Index = starting rotation state (0 = spawn, 1 = R, 2 = 2,
- * 3 = L); these are the clockwise tests (0->R, R->2, 2->L, L->0).
- *
- * Counter-clockwise tests are not stored: in SRS, the kicks of a->b are the
- * kicks of b->a with opposite signs.
- *
- * The board's y points DOWN, so kicksFor() flips the sign of y. Forgetting
- * that flip makes every vertical kick go the wrong way.
- */
-const SRS_JLSTZ_CW_KICKS = [
-	// 0 -> R
+type GuidelineKick = readonly [x: number, yPointingUp: number];
+
+const JLSTZ_CLOCKWISE_KICKS: GuidelineKick[][] = [
 	[
 		[0, 0],
 		[-1, 0],
@@ -65,7 +39,6 @@ const SRS_JLSTZ_CW_KICKS = [
 		[0, -2],
 		[-1, -2],
 	],
-	// R -> 2
 	[
 		[0, 0],
 		[1, 0],
@@ -73,7 +46,6 @@ const SRS_JLSTZ_CW_KICKS = [
 		[0, 2],
 		[1, 2],
 	],
-	// 2 -> L
 	[
 		[0, 0],
 		[1, 0],
@@ -81,7 +53,6 @@ const SRS_JLSTZ_CW_KICKS = [
 		[0, -2],
 		[1, -2],
 	],
-	// L -> 0
 	[
 		[0, 0],
 		[-1, 0],
@@ -91,8 +62,7 @@ const SRS_JLSTZ_CW_KICKS = [
 	],
 ];
 
-const SRS_I_CW_KICKS = [
-	// 0 -> R
+const I_CLOCKWISE_KICKS: GuidelineKick[][] = [
 	[
 		[0, 0],
 		[-2, 0],
@@ -100,7 +70,6 @@ const SRS_I_CW_KICKS = [
 		[-2, -1],
 		[1, 2],
 	],
-	// R -> 2
 	[
 		[0, 0],
 		[-1, 0],
@@ -108,7 +77,6 @@ const SRS_I_CW_KICKS = [
 		[-1, 2],
 		[2, -1],
 	],
-	// 2 -> L
 	[
 		[0, 0],
 		[2, 0],
@@ -116,7 +84,6 @@ const SRS_I_CW_KICKS = [
 		[2, 1],
 		[-1, -2],
 	],
-	// L -> 0
 	[
 		[0, 0],
 		[1, 0],
@@ -126,22 +93,27 @@ const SRS_I_CW_KICKS = [
 	],
 ];
 
-/**
- * Kick offsets to test, in board coordinates (y down), for a rotation of
- * `type` from rotation state `from` in `direction`.
- */
+function toBoardOffset([x, yPointingUp]: GuidelineKick): Position {
+	return { x: x || 0, y: -yPointingUp || 0 };
+}
+
+function opposite([x, y]: GuidelineKick): GuidelineKick {
+	return [-x, -y];
+}
+
 export function kicksFor(
 	type: PieceType,
-	from: number,
+	fromState: number,
 	direction: RotationDirection,
 ): Position[] {
-	const table = type === "I" ? SRS_I_CW_KICKS : SRS_JLSTZ_CW_KICKS;
-	if (direction === "cw") {
-		return table[from].map(([x, y]) => ({ x, y: -y || 0 }));
-	}
-	// ccw from `from` = reverse of cw from `from - 1`.
-	const previous = (from + 3) % 4;
-	return table[previous].map(([x, y]) => ({ x: -x || 0, y }));
+	const clockwiseKicks =
+		type === "I" ? I_CLOCKWISE_KICKS : JLSTZ_CLOCKWISE_KICKS;
+	if (direction === "cw") return clockwiseKicks[fromState].map(toBoardOffset);
+
+	const previousState = (fromState + 3) % 4;
+	return clockwiseKicks[previousState].map((kick) =>
+		toBoardOffset(opposite(kick)),
+	);
 }
 
 export const DIRECTIONS = {
@@ -200,10 +172,6 @@ export const PIECES_SHAPES: Record<PieceType, string[][]> = {
 	],
 };
 
-// -----------------------------------------------------------------------------
-// Grid
-// -----------------------------------------------------------------------------
-
 export function createEmptyRow(fill: string = EMPTY_CELL): string[] {
 	return Array(GRID_COLS).fill(fill);
 }
@@ -212,88 +180,77 @@ export function createEmptyGrid(): Grid {
 	return Array.from({ length: GRID_ROWS }, () => createEmptyRow());
 }
 
-/** Returns a copy of the grid with the piece written into it. */
+export interface Cell extends Position {
+	value: string;
+}
+
+export function pieceCells(piece: PieceData): Cell[] {
+	return piece.shape.flatMap((row, dy) =>
+		row.flatMap((value, dx) =>
+			value === EMPTY_CELL
+				? []
+				: [{ x: piece.pos.x + dx, y: piece.pos.y + dy, value }],
+		),
+	);
+}
+
+function isInsideBoard({ x, y }: Position): boolean {
+	return x >= 0 && x < GRID_COLS && y >= 0 && y < GRID_ROWS;
+}
+
 export function mergePiece(grid: Grid, piece: PieceData): Grid {
 	const newGrid = grid.map((row) => [...row]);
-
-	for (let y = 0; y < piece.shape.length; y++) {
-		for (let x = 0; x < piece.shape[y].length; x++) {
-			const cell = piece.shape[y][x];
-			if (cell === EMPTY_CELL) continue;
-
-			const gridX = piece.pos.x + x;
-			const gridY = piece.pos.y + y;
-			const row = newGrid[gridY];
-
-			// Cells outside the board are not written.
-			if (!row || gridX < 0 || gridX >= row.length) continue;
-
-			row[gridX] = cell;
-		}
+	for (const cell of pieceCells(piece)) {
+		if (isInsideBoard(cell)) newGrid[cell.y][cell.x] = cell.value;
 	}
-
 	return newGrid;
 }
 
-function isClearableRow(row: string[]): boolean {
+function isClearable(row: string[]): boolean {
 	return row.every((cell) => cell !== EMPTY_CELL && cell !== PENALTY_CELL);
 }
 
-/**
- * Removes every full row and returns the new grid plus the number of rows
- * removed. Rows containing a penalty cell are never cleared.
- */
 export function clearLines(grid: Grid): { grid: Grid; cleared: number } {
-	const keptRows = grid.filter((row) => !isClearableRow(row));
+	const keptRows = grid.filter((row) => !isClearable(row));
 	const cleared = grid.length - keptRows.length;
 	const newRows = Array.from({ length: cleared }, () => createEmptyRow());
 
 	return { grid: [...newRows, ...keptRows.map((row) => [...row])], cleared };
 }
 
-/**
- * Pushes `count` indestructible lines from the bottom. The top rows are pushed
- * out of the board; `overflow` tells whether one of them was not empty.
- */
 export function addPenaltyLines(
 	grid: Grid,
 	count: number,
 ): { grid: Grid; overflow: boolean } {
-	const n = Math.max(0, Math.min(count, grid.length));
-	const removedRows = grid.slice(0, n);
-	const overflow = removedRows.some((row) =>
+	const added = Math.max(0, Math.min(count, grid.length));
+	const pushedOutRows = grid.slice(0, added);
+	const overflow = pushedOutRows.some((row) =>
 		row.some((cell) => cell !== EMPTY_CELL),
 	);
-	const penaltyRows = Array.from({ length: n }, () =>
+	const penaltyRows = Array.from({ length: added }, () =>
 		createEmptyRow(PENALTY_CELL),
 	);
 
 	return {
-		grid: [...grid.slice(n).map((row) => [...row]), ...penaltyRows],
+		grid: [...grid.slice(added).map((row) => [...row]), ...penaltyRows],
 		overflow,
 	};
 }
-
-// -----------------------------------------------------------------------------
-// Difficulty and gravity
-// -----------------------------------------------------------------------------
 
 export type Difficulty = "easy" | "medium" | "hard";
 
 export const DIFFICULTIES: readonly Difficulty[] = ["easy", "medium", "hard"];
 
-/** Delay between two gravity steps at the start of a game (ms). */
 export const BASE_GRAVITY_MS: Record<Difficulty, number> = {
 	easy: 800,
 	medium: 500,
 	hard: 250,
 };
 
-/** Every LINES_PER_LEVEL lines cleared, gravity gets faster. */
 export const LINES_PER_LEVEL = 10;
-/** Factor applied to the delay at each level (20 % faster). */
+
 export const LEVEL_SPEEDUP = 0.8;
-/** The delay never goes below this (ms). */
+
 export const MIN_GRAVITY_MS = 50;
 
 export function isDifficulty(value: unknown): value is Difficulty {
@@ -302,19 +259,14 @@ export function isDifficulty(value: unknown): value is Difficulty {
 	);
 }
 
-/**
- * Gravity delay for a player: the difficulty sets the starting speed, and
- * every LINES_PER_LEVEL lines the piece falls 20 % faster.
- */
 export function gravityDelay(difficulty: Difficulty, lines: number): number {
 	const level = Math.floor(Math.max(0, lines) / LINES_PER_LEVEL);
 	const delay = BASE_GRAVITY_MS[difficulty] * LEVEL_SPEEDUP ** level;
 	return Math.max(MIN_GRAVITY_MS, Math.round(delay));
 }
 
-/** Points for 0, 1, 2, 3 and 4 lines cleared at once (guideline, level 1). */
 export const LINE_CLEAR_SCORES = [0, 100, 300, 500, 800];
-/** Points per row for a soft drop and a hard drop (guideline). */
+
 export const SOFT_DROP_POINTS = 1;
 export const HARD_DROP_POINTS = 2;
 
@@ -322,46 +274,23 @@ export function lineClearScore(cleared: number): number {
 	return LINE_CLEAR_SCORES[Math.max(0, Math.min(cleared, 4))];
 }
 
-/**
- * Number of penalty lines sent to each opponent when a player clears `cleared`
- * lines at once (n - 1, as required by the subject).
- */
 export function penaltyFor(cleared: number): number {
 	return Math.max(0, cleared - 1);
 }
 
-/**
- * Spectrum of a board: for each column, the height of the highest occupied
- * cell (0 for an empty column, GRID_ROWS for a full one).
- */
-export function computeSpectrum(grid: Grid): number[] {
-	const rows = grid.length;
-	const cols = grid[0]?.length ?? 0;
-	const spectrum: number[] = [];
-
-	for (let x = 0; x < cols; x++) {
-		let height = 0;
-		for (let y = 0; y < rows; y++) {
-			if (grid[y][x] !== EMPTY_CELL) {
-				height = rows - y;
-				break;
-			}
-		}
-		spectrum.push(height);
-	}
-
-	return spectrum;
+function columnHeight(grid: Grid, x: number): number {
+	const highestBlock = grid.findIndex((row) => row[x] !== EMPTY_CELL);
+	return highestBlock === -1 ? 0 : grid.length - highestBlock;
 }
 
-// -----------------------------------------------------------------------------
-// Pieces
-// -----------------------------------------------------------------------------
+export function computeSpectrum(grid: Grid): number[] {
+	return grid[0].map((_, x) => columnHeight(grid, x));
+}
 
 export function getShape(type: PieceType): string[][] {
 	return PIECES_SHAPES[type].map((row) => [...row]);
 }
 
-/** Clockwise rotation of a shape inside its bounding box. */
 export function rotateShape(shape: string[][]): string[][] {
 	const rows = shape.length;
 	return shape[0].map((_, x) =>
@@ -369,7 +298,6 @@ export function rotateShape(shape: string[][]): string[][] {
 	);
 }
 
-/** Counter-clockwise rotation of a shape inside its bounding box. */
 export function rotateShapeCounterClockwise(shape: string[][]): string[][] {
 	const cols = shape[0].length;
 	return Array.from({ length: cols }, (_, y) =>
@@ -382,25 +310,9 @@ export function isDirection(value: unknown): value is Direction {
 }
 
 export function isColliding(grid: Grid, piece: PieceData): boolean {
-	for (let y = 0; y < piece.shape.length; y++) {
-		for (let x = 0; x < piece.shape[y].length; x++) {
-			if (piece.shape[y][x] === EMPTY_CELL) continue;
-
-			const gridX = piece.pos.x + x;
-			const gridY = piece.pos.y + y;
-
-			if (
-				gridX < 0 ||
-				gridX >= GRID_COLS ||
-				gridY < 0 ||
-				gridY >= GRID_ROWS ||
-				grid[gridY][gridX] !== EMPTY_CELL
-			) {
-				return true;
-			}
-		}
-	}
-	return false;
+	return pieceCells(piece).some(
+		(cell) => !isInsideBoard(cell) || grid[cell.y][cell.x] !== EMPTY_CELL,
+	);
 }
 
 export function offsetPosition(
@@ -411,11 +323,6 @@ export function offsetPosition(
 	return { x: pos.x + dx, y: pos.y + dy };
 }
 
-/**
- * Tries an SRS rotation: rotates the shape, then tests the 5 kick offsets in
- * order and keeps the first position that fits. Returns null when none fits.
- * The O piece never rotates (its shape and position would not change).
- */
 export function rotateWithKicks(
 	grid: Grid,
 	piece: PieceData,
@@ -445,7 +352,6 @@ export function rotateWithKicks(
 	return null;
 }
 
-/** Lowest position the piece can reach by falling straight down. */
 export function dropPosition(grid: Grid, piece: PieceData): Position {
 	let pos = piece.pos;
 	while (!isColliding(grid, { ...piece, pos: offsetPosition(pos, 0, 1) })) {
@@ -454,11 +360,6 @@ export function dropPosition(grid: Grid, piece: PieceData): Position {
 	return pos;
 }
 
-// -----------------------------------------------------------------------------
-// Piece sequence
-// -----------------------------------------------------------------------------
-
-/** A shuffled "7-bag". `random` is injectable so tests are deterministic. */
 export function generateBag(random: () => number = Math.random): PieceType[] {
 	const bag = [...PIECE_TYPES];
 	for (let i = bag.length - 1; i > 0; i--) {

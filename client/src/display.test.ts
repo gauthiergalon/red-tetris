@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
-	type GameResult,
+	canConfigureGame,
 	getOpponents,
 	getStatusMessage,
 	isEliminated,
-	type PlayerSummary,
-	type RoomSnapshot,
+	opponentTags,
 	spectrumToRows,
 } from "./display.ts";
+import type { GameResult, PlayerSummary, RoomSnapshot } from "./types.ts";
 
 function player(id: string, patch: Partial<PlayerSummary> = {}): PlayerSummary {
 	return {
@@ -114,5 +114,31 @@ describe("countdown and eliminated players", () => {
 		expect(isEliminated(player("a", { alive: false, inGame: false }))).toBe(
 			false,
 		);
+	});
+});
+
+describe("opponentTags", () => {
+	it("lists what matters about an opponent", () => {
+		const playing = room("playing", []);
+		expect(opponentTags(player("a"), playing)).toBe(" (host)");
+		expect(opponentTags(player("b", { alive: false }), playing)).toBe(" (out)");
+		expect(
+			opponentTags(player("b", { inGame: false, alive: false }), playing),
+		).toBe(" (waiting)");
+		expect(opponentTags(player("b", { connected: false }), playing)).toBe(
+			" (disconnected)",
+		);
+		expect(
+			opponentTags(player("b", { alive: false }), room("waiting", [])),
+		).toBe("");
+	});
+});
+
+describe("canConfigureGame", () => {
+	it("is only true for the host while waiting", () => {
+		expect(canConfigureGame(room("waiting", []), "a")).toBe(true);
+		expect(canConfigureGame(room("waiting", []), "b")).toBe(false);
+		expect(canConfigureGame(room("playing", []), "a")).toBe(false);
+		expect(canConfigureGame(null, "a")).toBe(false);
 	});
 });

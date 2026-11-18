@@ -8,24 +8,13 @@ import { Server } from "socket.io";
 import { isDifficulty, isDirection } from "./game.ts";
 import { Game, type GameListener, type PlayerAction } from "./models/Game.ts";
 
-// -----------------------------------------------------------------------------
-// The Red Tetris server: Express serves the client, socket.io carries the
-// game, and each room is a Game. Everything is created by a function (no
-// global state), so integration tests can start a real server on a free
-// port, with short delays, and close it at the end.
-// -----------------------------------------------------------------------------
-
 export interface ServerOptions {
 	maxRooms?: number;
 	maxPlayersPerRoom?: number;
 	maxEventsPerSecond?: number;
-	/** How often the server runs gravity; each player has its own delay. */
 	tickMs?: number;
-	/** A disconnected player keeps its place this long (ms). */
 	graceMs?: number;
-	/** Countdown before a game starts (ms). */
 	countdownMs?: number;
-	/** Folder of the built client (vite build). */
 	distDir?: string;
 }
 
@@ -36,93 +25,101 @@ export interface RedTetrisServer {
 	close(): Promise<void>;
 }
 
-const defaultDistDir = path.resolve(
+type Handshake =
+	| { ok: true; roomId: string; username: string }
+	| { ok: false; reason: string };
+
+const MAX_ROOM_ID_LENGTH = 64;
+const MAX_USERNAME_LENGTH = 24;
+
+const builtClientDir = path.resolve(
 	path.dirname(fileURLToPath(import.meta.url)),
 	"../../dist",
 );
+
+export function parseHandshake(auth: Record<string, unknown>): Handshake {
+	const { roomId, username } = auth;
+	if (typeof roomId !== "string" || typeof username !== "string") {
+		return { ok: false, reason: "Invalid room ID or username." };
+	}
+
+	const room = roomId.trim();
+	const name = username.trim();
+	const validLength = (value: string, max: number) =>
+		value.length > 0 && value.length <= max;
+
+	if (
+		!validLength(room, MAX_ROOM_ID_LENGTH) ||
+		!validLength(name, MAX_USERNAME_LENGTH)
+	) {
+		return { ok: false, reason: "Room ID or username has an invalid length." };
+	}
+	return { ok: true, roomId: room, username: name };
+}
+
+const playerChannel = (playerId: string): string => `player:${playerId}`;
+
+function createRateLimiter(maxEventsPerSecond: number) {
+	const windows = new Map<string, { startedAt: number; count: number }>();
+
+	return {
+		allow(socketId: string): boolean {
+			const now = Date.now();
+			const window = windows.get(socketId);
+			if (!window || now - window.startedAt >= 1_000) {
+				windows.set(socketId, { startedAt: now, count: 1 });
+				return true;
+			}
+			if (window.count >= maxEventsPerSecond) return false;
+			window.count++;
+			return true;
+		},
+		forget(socketId: string): void {
+			windows.delete(socketId);
+		},
+	};
+}
+
+function serveClient(distDir: string) {
+	const app = express();
+	app.use(express.static(distDir));
+	app.get(/.*/, (_req: Request, res: Response) => {
+		res.sendFile(path.join(distDir, "index.html"));
+	});
+	return app;
+}
 
 export function createRedTetrisServer(
 	options: ServerOptions = {},
 ): RedTetrisServer {
 	const maxRooms = options.maxRooms ?? 1_000;
 	const maxPlayersPerRoom = options.maxPlayersPerRoom ?? 8;
-	const maxEventsPerSecond = options.maxEventsPerSecond ?? 30;
-	const tickMs = options.tickMs ?? 25;
 	const graceMs = options.graceMs ?? 5_000;
 	const countdownMs = options.countdownMs ?? 3_000;
-	const distDir = options.distDir ?? defaultDistDir;
 
-	const app = express();
-	app.use(express.static(distDir));
-	// Single-page app: every other URL gets index.html.
-	app.get(/.*/, (_req: Request, res: Response) => {
-		res.sendFile(path.join(distDir, "index.html"));
-	});
-
-	const httpServer = createServer(app);
+	const httpServer = createServer(
+		serveClient(options.distDir ?? builtClientDir),
+	);
 	const io = new Server(httpServer);
-
 	const games = new Map<string, Game>();
+	const rateLimiter = createRateLimiter(options.maxEventsPerSecond ?? 30);
+	const removalTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-	interface RateLimitWindow {
-		startedAt: number;
-		count: number;
-	}
-
-	const rateLimitWindows = new Map<string, RateLimitWindow>();
-
-	/** Pending removals of disconnected players, by player id. */
-	const graceTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-	// -----------------------------------------------------------------------------
-	// Rate limiting
-	// -----------------------------------------------------------------------------
-
-	function canProcessAction(socketId: string): boolean {
-		const now = Date.now();
-		const window = rateLimitWindows.get(socketId);
-
-		if (!window || now - window.startedAt >= 1_000) {
-			rateLimitWindows.set(socketId, { startedAt: now, count: 1 });
-			return true;
-		}
-
-		if (window.count >= maxEventsPerSecond) return false;
-
-		window.count++;
-		return true;
-	}
-
-	// -----------------------------------------------------------------------------
-	// Game <-> socket.io bridge
-	//
-	// A player's id is stable (it survives a reconnection), unlike socket.id.
-	// Each socket joins a socket.io room named after its player id, and the
-	// player's own messages are sent to that room.
-	// -----------------------------------------------------------------------------
-
-	const playerRoom = (playerId: string): string => `player:${playerId}`;
-
-	function createSocketListener(roomId: string): GameListener {
+	function broadcastTo(roomId: string): GameListener {
 		return {
-			playerState: (playerId, state) => {
-				io.to(playerRoom(playerId)).emit("gameState", state);
-			},
-			roomUpdate: (snapshot) => {
-				io.to(roomId).emit("room", snapshot);
-			},
-			gameEnd: (result) => {
-				io.to(roomId).emit("gameEnd", result);
-			},
+			playerState: (playerId, state) =>
+				io.to(playerChannel(playerId)).emit("gameState", state),
+			roomUpdate: (snapshot) => io.to(roomId).emit("room", snapshot),
+			gameEnd: (result) => io.to(roomId).emit("gameEnd", result),
 		};
 	}
 
-	function getOrCreateGame(roomId: string): Game | undefined {
+	function findOrCreateGame(roomId: string): Game | undefined {
 		const existing = games.get(roomId);
 		if (existing) return existing;
 		if (games.size >= maxRooms) return undefined;
 
-		const game = new Game(roomId, createSocketListener(roomId), {
+		const game = new Game(roomId, broadcastTo(roomId), {
 			maxPlayers: maxPlayersPerRoom,
 			countdownMs,
 		});
@@ -130,129 +127,113 @@ export function createRedTetrisServer(
 		return game;
 	}
 
-	// -----------------------------------------------------------------------------
-	// Socket.IO
-	// -----------------------------------------------------------------------------
+	function scheduleRemoval(game: Game, playerId: string): void {
+		removalTimers.set(
+			playerId,
+			setTimeout(() => {
+				removalTimers.delete(playerId);
+				game.leave(playerId);
+				if (game.isEmpty) games.delete(game.id);
+			}, graceMs),
+		);
+	}
+
+	function cancelRemoval(playerId: string): void {
+		clearTimeout(removalTimers.get(playerId));
+		removalTimers.delete(playerId);
+	}
 
 	io.on("connection", (socket) => {
-		const reject = (message: string): void => {
-			socket.emit("connectionError", { message });
+		const reject = (reason: string): void => {
+			socket.emit("connectionError", { message: reason });
 			socket.disconnect(true);
 		};
 
-		const auth = socket.handshake.auth ?? {};
-		const rawRoomId = auth.roomId;
-		const rawUsername = auth.username;
+		const handshake = parseHandshake(socket.handshake.auth);
+		if (!handshake.ok) return reject(handshake.reason);
 
-		// Validate handshake data.
-		if (typeof rawRoomId !== "string" || typeof rawUsername !== "string") {
-			reject("Invalid room ID or username.");
-			return;
-		}
+		const game = findOrCreateGame(handshake.roomId);
+		if (!game) return reject("Maximum number of rooms reached.");
 
-		const roomId = rawRoomId.trim();
-		const username = rawUsername.trim();
-
-		if (
-			roomId.length === 0 ||
-			roomId.length > 64 ||
-			username.length === 0 ||
-			username.length > 24
-		) {
-			reject("Room ID or username has an invalid length.");
-			return;
-		}
-
-		const game = getOrCreateGame(roomId);
-
-		if (!game) {
-			reject("Maximum number of rooms reached.");
-			return;
-		}
-
-		// Join the socket.io rooms first, so this socket receives the updates
-		// sent by game.join(). The player room is joined once the id is known.
-		socket.join(roomId);
-
-		const joined = game.join(randomUUID(), username);
-
+		socket.join(game.id);
+		const joined = game.join(randomUUID(), handshake.username);
 		if (!joined.ok) {
-			if (game.isEmpty) games.delete(roomId);
-			reject(joined.reason);
-			return;
+			if (game.isEmpty) games.delete(game.id);
+			return reject(joined.reason);
 		}
 
-		const playerId = joined.player.id;
-
-		// Reconnection within the grace period: cancel the pending removal.
-		clearTimeout(graceTimers.get(playerId));
-		graceTimers.delete(playerId);
-
-		socket.join(playerRoom(playerId));
-		socket.emit("welcome", { playerId });
-		// Send the state again now that this socket is in the player room.
-		socket.emit("gameState", joined.player.toState(game.isPlaying));
+		const { player } = joined;
+		cancelRemoval(player.id);
+		socket.join(playerChannel(player.id));
+		socket.emit("welcome", { playerId: player.id });
+		socket.emit("gameState", player.toState(game.isPlaying));
 		socket.emit("room", game.snapshot());
 
-		const act = (action: PlayerAction): void => {
-			if (!canProcessAction(socket.id)) return;
-			game.handleAction(playerId, action);
-		};
+		const whenAllowed =
+			<Args extends unknown[]>(handler: (...args: Args) => void) =>
+			(...args: Args) => {
+				if (rateLimiter.allow(socket.id)) handler(...args);
+			};
+		const act = (action: PlayerAction) => game.handleAction(player.id, action);
 
-		socket.on("start", () => {
-			if (!canProcessAction(socket.id)) return;
-			game.start(playerId);
-		});
-
-		// rotate() or rotate("cw") = clockwise, rotate("ccw") = counter-clockwise.
-		socket.on("rotate", (direction: unknown) =>
-			act({ type: "rotate", direction: direction === "ccw" ? "ccw" : "cw" }),
+		socket.on(
+			"start",
+			whenAllowed(() => game.start(player.id)),
 		);
-		socket.on("hardDrop", () => act({ type: "hardDrop" }));
-		socket.on("hold", () => act({ type: "hold" }));
-		socket.on("difficulty", (difficulty: unknown) => {
-			if (!canProcessAction(socket.id) || !isDifficulty(difficulty)) return;
-			game.setDifficulty(playerId, difficulty);
-		});
-		// softDrop(true/false) = key held/released; softDrop() = one row.
-		socket.on("softDrop", (active: unknown) => {
-			if (typeof active === "boolean") act({ type: "setSoftDrop", active });
-			else act({ type: "softDrop" });
-		});
-		socket.on("move", (direction: unknown) => {
-			if (!isDirection(direction)) return;
-			act({ type: "move", direction });
-		});
+		socket.on(
+			"difficulty",
+			whenAllowed((difficulty: unknown) => {
+				if (isDifficulty(difficulty)) game.setDifficulty(player.id, difficulty);
+			}),
+		);
+		socket.on(
+			"move",
+			whenAllowed((direction: unknown) => {
+				if (isDirection(direction)) act({ type: "move", direction });
+			}),
+		);
+		socket.on(
+			"rotate",
+			whenAllowed((direction: unknown) =>
+				act({ type: "rotate", direction: direction === "ccw" ? "ccw" : "cw" }),
+			),
+		);
+		socket.on(
+			"softDrop",
+			whenAllowed((held: unknown) =>
+				act(
+					typeof held === "boolean"
+						? { type: "setSoftDrop", active: held }
+						: { type: "softDrop" },
+				),
+			),
+		);
+		socket.on(
+			"hardDrop",
+			whenAllowed(() => act({ type: "hardDrop" })),
+		);
+		socket.on(
+			"hold",
+			whenAllowed(() => act({ type: "hold" })),
+		);
 
 		socket.on("disconnect", () => {
-			rateLimitWindows.delete(socket.id);
-			game.disconnect(playerId);
-			graceTimers.set(
-				playerId,
-				setTimeout(() => {
-					graceTimers.delete(playerId);
-					game.leave(playerId);
-					if (game.isEmpty) games.delete(roomId);
-				}, graceMs),
-			);
+			rateLimiter.forget(socket.id);
+			game.disconnect(player.id);
+			scheduleRemoval(game, player.id);
 		});
 	});
 
-	// -------------------------------------------------------------------------
-	// Lifecycle
-	// -------------------------------------------------------------------------
-
 	const tickInterval = setInterval(() => {
 		for (const game of games.values()) game.tick();
-	}, tickMs);
+	}, options.tickMs ?? 25);
 
-	const close = async (): Promise<void> => {
+	async function close(): Promise<void> {
 		clearInterval(tickInterval);
-		for (const timer of graceTimers.values()) clearTimeout(timer);
-		graceTimers.clear();
-		// io.close() disconnects every socket and closes the HTTP server.
+		for (const timer of removalTimers.values()) clearTimeout(timer);
+		removalTimers.clear();
 		await new Promise<void>((resolve) => io.close(() => resolve()));
-	};
+	}
 
 	return { httpServer, io, games, close };
 }

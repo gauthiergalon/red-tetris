@@ -27,7 +27,7 @@ describe("Piece", () => {
 		expect(Piece.spawn("O").pos).toEqual({ x: 4, y: 0 });
 		const i = Piece.spawn("I");
 		expect(i.collides(createEmptyGrid())).toBe(false);
-		expect(i.pos.y + 1).toBe(0); // the filled row of the I box is row 0
+		expect(i.pos.y + 1).toBe(0);
 	});
 
 	it("rotates, or returns null when blocked", () => {

@@ -5,10 +5,9 @@ import type {
 	RotationDirection,
 } from "../game.ts";
 import { generateBag, gravityDelay, penaltyFor } from "../game.ts";
-import { type ActionType, canAct } from "../throttle.ts";
+import { canAct } from "../throttle.ts";
 import { Player, type PlayerState, type StepResult } from "./Player.ts";
 
-/** waiting -> (host clicks Start) -> countdown -> playing -> waiting */
 export type GameStatus = "waiting" | "countdown" | "playing";
 
 export type PlayerAction =
@@ -17,30 +16,24 @@ export type PlayerAction =
 	| { type: "softDrop" }
 	| { type: "hardDrop" }
 	| { type: "hold" }
-	/** Soft drop held (true) or released (false): replaces gravity speed. */
 	| { type: "setSoftDrop"; active: boolean };
 
-/** Delay between two steps while soft drop is held (ms). */
 export const SOFT_DROP_MS = 50;
 
 export interface PlayerSummary {
 	id: string;
 	username: string;
 	alive: boolean;
-	/** False for a player who joined during the game and waits for the next. */
 	inGame: boolean;
-	/** False during the grace period after a disconnection. */
 	connected: boolean;
 	score: number;
 	spectrum: number[];
 }
 
-/** Public information about a room, sent to every player in it. */
 export interface RoomSnapshot {
 	id: string;
 	status: GameStatus;
 	hostId: string | undefined;
-	/** Seconds left before the start, only during the countdown. */
 	countdown: number | null;
 	difficulty: Difficulty;
 	players: PlayerSummary[];
@@ -50,10 +43,6 @@ export interface GameResult {
 	winner: { id: string; username: string } | null;
 }
 
-/**
- * How a Game talks to the outside world. index.ts plugs socket.io here;
- * tests plug simple recorders. The Game itself knows nothing about sockets.
- */
 export interface GameListener {
 	playerState(playerId: string, state: PlayerState): void;
 	roomUpdate(snapshot: RoomSnapshot): void;
@@ -67,37 +56,26 @@ export type JoinResult =
 export interface GameOptions {
 	maxPlayers?: number;
 	random?: () => number;
-	/** Clock used by gravity and the action throttle; injectable for tests. */
 	now?: () => number;
-	/** Countdown between Start and the first piece (ms). 0 starts at once. */
 	countdownMs?: number;
 }
 
-/**
- * One room: its host, its players, its status and its own piece sequence.
- *
- * The sequence is generated lazily, one 7-bag at a time, and reset at every
- * start: two rooms never share pieces, but all players of a room get the same
- * pieces in the same order.
- */
 export class Game {
 	readonly id: string;
-	status: GameStatus = "waiting";
-	/** Chosen by the host before the start; applies to the whole room. */
-	difficulty: Difficulty = "medium";
-	hostId: string | undefined = undefined;
 	readonly players = new Map<string, Player>();
 	readonly maxPlayers: number;
-	#sequence: PieceType[] = [];
-	/** True when the current game started with more than one player. */
-	#multiplayer = false;
-	readonly #random: () => number;
+	status: GameStatus = "waiting";
+	difficulty: Difficulty = "medium";
+	hostId: string | undefined = undefined;
+
 	readonly #listener: GameListener;
+	readonly #random: () => number;
 	readonly #now: () => number;
 	readonly #countdownMs: number;
-	/** When the countdown ends (ms, server clock). */
+	#sequence: PieceType[] = [];
+	#multiplayer = false;
 	#startsAt = 0;
-	#lastCountdown: number | null = null;
+	#lastAnnouncedCountdown: number | null = null;
 
 	constructor(id: string, listener: GameListener, options: GameOptions = {}) {
 		this.id = id;
@@ -116,7 +94,6 @@ export class Game {
 		return this.players.size === 0;
 	}
 
-	/** Piece type at `index` of this game's sequence, extended on demand. */
 	pieceAt(index: number): PieceType {
 		while (index >= this.#sequence.length) {
 			this.#sequence.push(...generateBag(this.#random));
@@ -124,25 +101,14 @@ export class Game {
 		return this.#sequence[index];
 	}
 
-	/**
-	 * Adds a player. During a game the player is accepted but waits: it is not
-	 * alive and not in the game, and takes part in the next start.
-	 *
-	 * If a disconnected player with the same username is still in its grace
-	 * period, it gets its place back instead (`resumed: true`).
-	 */
 	join(id: string, username: string): JoinResult {
-		const existing = this.#findByUsername(username);
+		const existing = [...this.players.values()].find(
+			(player) => player.username === username,
+		);
 		if (existing?.connected) {
 			return { ok: false, reason: "This username is already taken here." };
 		}
-		if (existing) {
-			existing.connected = true;
-			this.#sendState(existing);
-			this.#notifyRoom();
-			return { ok: true, player: existing, resumed: true };
-		}
-
+		if (existing) return this.#resume(existing);
 		if (this.players.size >= this.maxPlayers) {
 			return { ok: false, reason: "This room is full." };
 		}
@@ -150,16 +116,11 @@ export class Game {
 		const player = new Player(id, username, (index) => this.pieceAt(index));
 		this.players.set(id, player);
 		this.hostId ??= id;
-
-		this.#listener.playerState(id, player.toState(false));
+		this.#sendState(player);
 		this.#notifyRoom();
 		return { ok: true, player, resumed: false };
 	}
 
-	/**
-	 * Start of the grace period: the player keeps its place (and its host
-	 * role) until it reconnects or `leave` is called.
-	 */
 	disconnect(id: string): void {
 		const player = this.players.get(id);
 		if (!player) return;
@@ -170,71 +131,38 @@ export class Game {
 
 	leave(id: string): void {
 		if (!this.players.delete(id)) return;
-
-		if (this.hostId === id) {
-			// The oldest remaining player becomes the host.
-			this.hostId = this.players.keys().next().value;
-		}
+		if (this.hostId === id) this.hostId = this.players.keys().next().value;
 
 		if (this.isEmpty) {
 			this.status = "waiting";
 			return;
 		}
-
 		this.#notifyRoom();
-		this.#checkEnd();
+		this.#endIfOver();
 	}
 
-	/**
-	 * Starts the countdown. Only the host can do it, and only while waiting.
-	 * The game itself begins when the countdown ends (see tick).
-	 */
 	start(requesterId: string): boolean {
-		if (requesterId !== this.hostId || this.status !== "waiting") return false;
+		if (!this.#canConfigure(requesterId)) return false;
 
 		if (this.#countdownMs <= 0) {
 			this.#begin();
-			return true;
+		} else {
+			this.status = "countdown";
+			this.#startsAt = this.#now() + this.#countdownMs;
+			this.#lastAnnouncedCountdown = this.#secondsBeforeStart();
+			this.#notifyRoom();
 		}
-
-		this.status = "countdown";
-		this.#startsAt = this.#now() + this.#countdownMs;
-		this.#lastCountdown = this.#countdownLeft();
-		this.#notifyRoom();
 		return true;
 	}
 
-	/** The host picks the difficulty, only between games. */
 	setDifficulty(requesterId: string, difficulty: Difficulty): boolean {
-		if (requesterId !== this.hostId || this.status !== "waiting") return false;
+		if (!this.#canConfigure(requesterId)) return false;
 		if (difficulty === this.difficulty) return false;
 		this.difficulty = difficulty;
 		this.#notifyRoom();
 		return true;
 	}
 
-	/** Seconds left in the countdown, rounded up (3, 2, 1, then 0). */
-	#countdownLeft(): number {
-		return Math.max(0, Math.ceil((this.#startsAt - this.#now()) / 1000));
-	}
-
-	#begin(): void {
-		this.#sequence = [];
-		this.#multiplayer = this.players.size > 1;
-		this.status = "playing";
-
-		const now = this.#now();
-		for (const player of this.players.values()) {
-			player.reset();
-			player.lastFallAt = now;
-			this.#listener.playerState(player.id, player.toState(true));
-		}
-
-		this.#notifyRoom();
-		this.#checkEnd();
-	}
-
-	/** Applies a player's input. Returns true when something changed. */
 	handleAction(playerId: string, action: PlayerAction): boolean {
 		const player = this.players.get(playerId);
 		if (!this.isPlaying || !player?.alive) return false;
@@ -243,54 +171,27 @@ export class Game {
 			return this.#setSoftDrop(player, action.active);
 		}
 
-		// Server-side limit: each action type has a minimum interval.
 		const now = this.#now();
 		if (!canAct(player.lastActionAt, action.type, now)) return false;
-		player.lastActionAt[action.type satisfies ActionType] = now;
+		player.lastActionAt[action.type] = now;
 
 		switch (action.type) {
 			case "move":
-				return this.#applyMove(player, player.move(action.direction));
+				return this.#reportMove(player, player.move(action.direction));
 			case "rotate":
-				return this.#applyMove(player, player.rotate(action.direction));
+				return this.#reportMove(player, player.rotate(action.direction));
 			case "softDrop":
-				return this.#applyMove(player, player.softDrop());
+				return this.#reportMove(player, player.softDrop());
 			case "hardDrop":
-				return this.#applyStep(player, player.hardDrop());
+				return this.#reportStep(player, player.hardDrop());
 			case "hold":
-				return this.#applyHold(player);
+				return this.#hold(player);
 		}
 	}
 
-	/**
-	 * Gravity. Called often (every few ms); each player falls by one row when
-	 * its own delay has passed: gravityDelay() (difficulty + lines cleared)
-	 * normally, SOFT_DROP_MS while soft
-	 * drop is held. Soft drop replaces gravity, it does not add to it.
-	 */
 	tick(): void {
-		if (this.status === "countdown") {
-			const left = this.#countdownLeft();
-			if (left <= 0) this.#begin();
-			else if (left !== this.#lastCountdown) {
-				// Tell every player each time the displayed second changes.
-				this.#lastCountdown = left;
-				this.#notifyRoom();
-			}
-			return;
-		}
-		if (!this.isPlaying) return;
-		const now = this.#now();
-		for (const player of this.players.values()) {
-			if (!this.isPlaying) return;
-			if (!player.alive) continue;
-			const delay = player.softDropping
-				? SOFT_DROP_MS
-				: gravityDelay(this.difficulty, player.lines);
-			if (now - player.lastFallAt < delay) continue;
-			player.lastFallAt = now;
-			this.#applyStep(player, player.tick());
-		}
+		if (this.status === "countdown") this.#tickCountdown();
+		else if (this.isPlaying) this.#applyGravity();
 	}
 
 	snapshot(): RoomSnapshot {
@@ -298,7 +199,8 @@ export class Game {
 			id: this.id,
 			status: this.status,
 			hostId: this.hostId,
-			countdown: this.status === "countdown" ? this.#countdownLeft() : null,
+			countdown:
+				this.status === "countdown" ? this.#secondsBeforeStart() : null,
 			difficulty: this.difficulty,
 			players: [...this.players.values()].map((player) => ({
 				id: player.id,
@@ -312,80 +214,118 @@ export class Game {
 		};
 	}
 
-	#findByUsername(username: string): Player | undefined {
-		for (const player of this.players.values()) {
-			if (player.username === username) return player;
+	#canConfigure(requesterId: string): boolean {
+		return requesterId === this.hostId && this.status === "waiting";
+	}
+
+	#resume(player: Player): JoinResult {
+		player.connected = true;
+		this.#sendState(player);
+		this.#notifyRoom();
+		return { ok: true, player, resumed: true };
+	}
+
+	#secondsBeforeStart(): number {
+		return Math.max(0, Math.ceil((this.#startsAt - this.#now()) / 1000));
+	}
+
+	#tickCountdown(): void {
+		const seconds = this.#secondsBeforeStart();
+		if (seconds <= 0) {
+			this.#begin();
+		} else if (seconds !== this.#lastAnnouncedCountdown) {
+			this.#lastAnnouncedCountdown = seconds;
+			this.#notifyRoom();
 		}
-		return undefined;
+	}
+
+	#begin(): void {
+		this.#sequence = [];
+		this.#multiplayer = this.players.size > 1;
+		this.status = "playing";
+
+		const now = this.#now();
+		for (const player of this.players.values()) {
+			player.reset();
+			player.lastFallAt = now;
+			this.#sendState(player);
+		}
+		this.#notifyRoom();
+		this.#endIfOver();
+	}
+
+	#applyGravity(): void {
+		const now = this.#now();
+		for (const player of this.players.values()) {
+			if (!this.isPlaying) return;
+			if (!player.alive) continue;
+			if (now - player.lastFallAt < this.#fallDelay(player)) continue;
+			player.lastFallAt = now;
+			this.#reportStep(player, player.tick());
+		}
+	}
+
+	#fallDelay(player: Player): number {
+		return player.softDropping
+			? SOFT_DROP_MS
+			: gravityDelay(this.difficulty, player.lines);
 	}
 
 	#setSoftDrop(player: Player, active: boolean): boolean {
 		if (player.softDropping === active) return false;
 		player.softDropping = active;
-		// Pressing: fall right away. Releasing: gravity restarts from now.
 		player.lastFallAt = this.#now();
-		if (active) return this.#applyStep(player, player.tick());
-		return false;
+		return active && this.#reportStep(player, player.tick());
 	}
 
-	#applyHold(player: Player): boolean {
+	#hold(player: Player): boolean {
 		if (!player.hold()) return false;
 		this.#sendState(player);
-		// The swapped-in piece may have nowhere to appear: that is a game over.
-		if (!player.alive) {
-			this.#notifyRoom();
-			this.#checkEnd();
+		if (!player.alive) this.#boardsChanged();
+		return true;
+	}
+
+	#reportMove(player: Player, moved: boolean): boolean {
+		if (moved) this.#sendState(player);
+		return moved;
+	}
+
+	#reportStep(player: Player, result: StepResult): boolean {
+		this.#sendState(player);
+		if (result.locked) {
+			this.#sendPenalty(player, penaltyFor(result.cleared));
+			this.#boardsChanged();
 		}
 		return true;
 	}
 
-	#applyMove(player: Player, changed: boolean): boolean {
-		if (changed) this.#sendState(player);
-		return changed;
-	}
-
-	#applyStep(player: Player, result: StepResult): boolean {
-		if (!result.changed) return false;
-		this.#sendState(player);
-		if (!result.locked) return true;
-
-		const penalty = penaltyFor(result.cleared);
-		if (penalty > 0) {
-			for (const opponent of this.players.values()) {
-				if (opponent !== player && opponent.receivePenalty(penalty)) {
-					this.#sendState(opponent);
-				}
+	#sendPenalty(sender: Player, lines: number): void {
+		if (lines <= 0) return;
+		for (const opponent of this.players.values()) {
+			if (opponent !== sender && opponent.receivePenalty(lines)) {
+				this.#sendState(opponent);
 			}
 		}
-
-		// The board changed, so the spectra changed: tell the whole room.
-		this.#notifyRoom();
-		this.#checkEnd();
-		return true;
 	}
 
-	/**
-	 * Ends the game when nobody can win anymore: at most one survivor in
-	 * multiplayer, no survivor in solo. The room goes back to "waiting".
-	 */
-	#checkEnd(): void {
+	#boardsChanged(): void {
+		this.#notifyRoom();
+		this.#endIfOver();
+	}
+
+	#endIfOver(): void {
 		if (!this.isPlaying) return;
 
 		const alive = [...this.players.values()].filter((p) => p.alive);
-		const finished = this.#multiplayer ? alive.length <= 1 : alive.length === 0;
-		if (!finished) return;
+		const over = this.#multiplayer ? alive.length <= 1 : alive.length === 0;
+		if (!over) return;
 
 		this.status = "waiting";
-		const survivor = this.#multiplayer ? alive[0] : undefined;
+		for (const player of this.players.values()) this.#sendState(player);
 
-		for (const player of this.players.values()) {
-			this.#sendState(player);
-		}
-
+		const winner = this.#multiplayer ? alive[0] : undefined;
 		this.#listener.gameEnd({
-			winner: survivor
-				? { id: survivor.id, username: survivor.username }
-				: null,
+			winner: winner ? { id: winner.id, username: winner.username } : null,
 		});
 		this.#notifyRoom();
 	}

@@ -1,5 +1,3 @@
-// Integration tests: a real HTTP + socket.io server on a free port, and real
-// socket.io clients, as in the browser.
 import { mkdtempSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -21,7 +19,6 @@ afterEach(async () => {
 	server = undefined;
 });
 
-/** Starts a server on a free port and returns its URL. */
 async function start(options: ServerOptions = {}): Promise<string> {
 	server = createRedTetrisServer({ countdownMs: 0, ...options });
 	const http = server.httpServer;
@@ -40,7 +37,6 @@ function connect(url: string, auth: object): Socket {
 	return client;
 }
 
-/** Resolves with the first `event` payload that matches `accept`. */
 function next<T>(
 	client: Socket,
 	event: string,
@@ -80,7 +76,6 @@ interface Room {
 	players: { id: string; username: string; connected: boolean }[];
 }
 
-/** Connects a player and waits until it is welcomed. */
 async function join(url: string, roomId: string, username: string) {
 	const client = connect(url, { roomId, username });
 	const { playerId } = await next<{ playerId: string }>(client, "welcome");
@@ -129,7 +124,6 @@ describe("server: playing", () => {
 		);
 		expect(room.hostId).toBe(alice.playerId);
 
-		// Only the host changes the difficulty; invalid values are ignored.
 		bob.client.emit("difficulty", "easy");
 		alice.client.emit("difficulty", "insane");
 		alice.client.emit("difficulty", "hard");
@@ -158,7 +152,7 @@ describe("server: playing", () => {
 			"gameState",
 			(s) => s.piece?.pos.x === x - 1,
 		);
-		client.emit("move", "up"); // invalid: ignored
+		client.emit("move", "up");
 		client.emit("move", "left");
 		await moved;
 
@@ -166,7 +160,6 @@ describe("server: playing", () => {
 		client.emit("hold");
 		let latest = await held;
 
-		// The O never rotates: drop it until another piece comes.
 		while (latest.piece?.type === "O") {
 			const placed = next<State>(
 				client,
@@ -178,7 +171,7 @@ describe("server: playing", () => {
 			latest = await placed;
 		}
 
-		await wait(60); // server-side limit between two rotations
+		await wait(60);
 		const rotated = next<State>(
 			client,
 			"gameState",
@@ -246,7 +239,7 @@ describe("server: reconnection grace period", () => {
 
 		const again = await join(url, "r", "alice");
 		expect(again.playerId).toBe(alice.playerId);
-		await wait(400); // longer than the grace period: the timer was cancelled
+		await wait(400);
 		expect(server?.games.get("r")?.players.has(alice.playerId)).toBe(true);
 	});
 

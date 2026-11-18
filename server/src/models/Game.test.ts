@@ -9,7 +9,6 @@ import {
 } from "./Game.ts";
 import type { PlayerState } from "./Player.ts";
 
-/** A listener that records everything the Game emits. */
 function recorder() {
 	const states: { id: string; state: PlayerState }[] = [];
 	const rooms: RoomSnapshot[] = [];
@@ -24,8 +23,7 @@ function recorder() {
 
 function makeGame(maxPlayers = 8) {
 	const rec = recorder();
-	// Fixed random: the sequence is deterministic in tests. The clock moves
-	// 1 s per call, so the action throttle never gets in the way.
+
 	let time = 0;
 	const game = new Game("room", rec.listener, {
 		maxPlayers,
@@ -42,7 +40,6 @@ function getPlayer(game: Game, id: string) {
 	return player;
 }
 
-/** Fills the last rows of a player's board except the given columns. */
 function prepareRows(game: Game, id: string, rows: number, free: number[]) {
 	const player = getPlayer(game, id);
 	for (let y = GRID_ROWS - rows; y < GRID_ROWS; y++) {
@@ -83,9 +80,9 @@ describe("Game: joining and hosting", () => {
 		const carol = game.players.get("c");
 		expect(carol?.alive).toBe(false);
 		expect(rooms.at(-1)?.players.find((p) => p.id === "c")?.inGame).toBe(false);
-		// The waiting player cannot play...
+
 		expect(game.handleAction("c", { type: "rotate" })).toBe(false);
-		// ...and does not prevent the game from ending.
+
 		prepareRows(game, "b", GRID_ROWS - 2, [0]);
 		game.handleAction("b", { type: "hardDrop" });
 		expect(game.status).toBe("waiting");
@@ -97,7 +94,7 @@ describe("Game: joining and hosting", () => {
 		game.join("b", "bob");
 		game.start("a");
 		game.join("c", "carol");
-		game.leave("b"); // alice wins, the room goes back to waiting
+		game.leave("b");
 
 		expect(game.start("a")).toBe(true);
 		const carol = game.players.get("c");
@@ -140,7 +137,7 @@ describe("Game: starting", () => {
 		game.start("a");
 		game.handleAction("a", { type: "hardDrop" });
 		expect(game.start("a")).toBe(false);
-		// The board was not reset by the refused start.
+
 		expect(game.players.get("a")?.sequenceIndex).toBe(2);
 	});
 
@@ -190,10 +187,10 @@ describe("Game: actions and gravity", () => {
 		expect(game.handleAction("a", { type: "move", direction: "left" })).toBe(
 			true,
 		);
-		// The first piece is an O: like in the official games, it never rotates.
+
 		expect(game.handleAction("a", { type: "rotate" })).toBe(false);
 		expect(game.handleAction("a", { type: "hardDrop" })).toBe(true);
-		// The next one is a T.
+
 		expect(game.handleAction("a", { type: "rotate" })).toBe(true);
 		expect(game.handleAction("a", { type: "rotate", direction: "ccw" })).toBe(
 			true,
@@ -214,7 +211,6 @@ describe("Game: actions and gravity", () => {
 	});
 });
 
-/** Cells ("x,y") the current piece of a player will fill once hard dropped. */
 function landingCells(game: Game, id: string): Set<string> {
 	const player = getPlayer(game, id);
 	if (!player.piece) throw new Error("no piece");
@@ -228,7 +224,6 @@ function landingCells(game: Game, id: string): Set<string> {
 	return cells;
 }
 
-/** Fills the given rows with blocks, except where the piece will land. */
 function fillAroundLanding(game: Game, id: string, rows: number[]) {
 	const player = getPlayer(game, id);
 	const cells = landingCells(game, id);
@@ -258,7 +253,7 @@ describe("Game: penalties and spectrum", () => {
 		game.join("c", "carol");
 		game.start("a");
 		const rows = landingRows(game, "a");
-		// With the fixed random, the first piece is an O: it clears 2 lines.
+
 		expect(rows.length).toBe(2);
 		fillAroundLanding(game, "a", rows);
 
@@ -311,7 +306,6 @@ describe("Game: penalties and spectrum", () => {
 });
 
 describe("Game: end of game", () => {
-	/** Fills the board so that the next hard drop kills the player. */
 	function prepareDeath(game: Game, id: string) {
 		prepareRows(game, id, GRID_ROWS - 2, [0]);
 	}
@@ -328,7 +322,7 @@ describe("Game: end of game", () => {
 		expect(ends).toEqual([{ winner: { id: "a", username: "alice" } }]);
 		expect(game.status).toBe("waiting");
 		expect(states.at(-1)?.state.playing).toBe(false);
-		// A new player can now join, and the host can restart.
+
 		expect(game.join("c", "carol").ok).toBe(true);
 		expect(game.start("a")).toBe(true);
 	});
@@ -373,7 +367,7 @@ describe("Game: server-side action limit", () => {
 		expect(game.handleAction("a", { type: "move", direction: "left" })).toBe(
 			false,
 		);
-		// Another action type has its own delay.
+
 		expect(game.handleAction("a", { type: "softDrop" })).toBe(true);
 		time += 100;
 		expect(game.handleAction("a", { type: "move", direction: "left" })).toBe(
@@ -411,22 +405,22 @@ describe("Game: gravity and soft drop", () => {
 	it("replaces gravity by SOFT_DROP_MS while held, without adding to it", () => {
 		const { game, clock, y } = clockGame();
 		const start = y();
-		// Pressing falls immediately.
+
 		expect(game.handleAction("a", { type: "setSoftDrop", active: true })).toBe(
 			true,
 		);
 		expect(y()).toBe(start + 1);
-		// Then exactly one row per SOFT_DROP_MS.
+
 		for (let i = 1; i <= 4; i++) {
 			clock.time = i * SOFT_DROP_MS;
 			game.tick();
 		}
 		expect(y()).toBe(start + 5);
-		// Pressing again changes nothing.
+
 		expect(game.handleAction("a", { type: "setSoftDrop", active: true })).toBe(
 			false,
 		);
-		// Released: back to normal gravity, counted from the release.
+
 		game.handleAction("a", { type: "setSoftDrop", active: false });
 		clock.time += BASE_GRAVITY_MS.medium - 1;
 		game.tick();
@@ -501,9 +495,8 @@ describe("Game: countdown before the start", () => {
 		clock.time = 1500;
 		const updates = rec.rooms.length;
 		game.tick();
-		expect(rec.rooms.length).toBe(updates); // same second: no new update
+		expect(rec.rooms.length).toBe(updates);
 
-		// Someone joining during the countdown plays too.
 		game.join("c", "carol");
 		clock.time = 3000;
 		game.tick();
@@ -521,7 +514,7 @@ describe("Game: hold and difficulty", () => {
 		game.start("a");
 		expect(game.handleAction("a", { type: "hold" })).toBe(true);
 		expect(game.handleAction("a", { type: "hold" })).toBe(false);
-		// Alice took the 2nd piece of the sequence; Bob will get the same one.
+
 		const aliceSecond = getPlayer(game, "a").piece?.type;
 		game.handleAction("b", { type: "hardDrop" });
 		expect(getPlayer(game, "b").piece?.type).toBe(aliceSecond);
@@ -601,13 +594,13 @@ describe("Game: tick edge cases", () => {
 
 	it("stops the tick as soon as the game ends during it", () => {
 		const { game, clock, ends } = clockedGame(["a", "b"]);
-		// Alice's piece cannot fall: this tick locks it and she dies.
+
 		prepareRows(game, "a", GRID_ROWS - 2, [0]);
 		const bobPiece = getPlayer(game, "b").piece;
 		clock.time = BASE_GRAVITY_MS.medium;
 		game.tick();
 		expect(ends).toEqual([{ winner: { id: "b", username: "b" } }]);
-		// Bob, after Alice in the loop, did not move once the game was over.
+
 		expect(getPlayer(game, "b").piece).toBe(bobPiece);
 	});
 });

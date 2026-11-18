@@ -8,8 +8,6 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// A fake socket: the test plays the server by calling the handlers that the
-// component registered with socket.on(...), and checks what it emitted.
 const fake = vi.hoisted(() => {
 	const handlers = new Map<string, (payload: unknown) => void>();
 	const socket = {
@@ -230,7 +228,7 @@ describe("Game screen: playing", () => {
 		act(() => vi.advanceTimersByTime(169));
 		expect(emitted()).toHaveLength(1);
 		act(() => vi.advanceTimersByTime(1 + 60));
-		expect(emitted()).toHaveLength(3); // DAS reached, then one ARR step
+		expect(emitted()).toHaveLength(3);
 		key("keyUp", "ArrowLeft");
 		act(() => vi.advanceTimersByTime(500));
 		expect(emitted()).toHaveLength(3);

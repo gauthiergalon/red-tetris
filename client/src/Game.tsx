@@ -1,80 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { io, type Socket } from "socket.io-client";
+import { Board } from "./components/Board";
+import { Opponents } from "./components/Opponents";
+import { SidePanel } from "./components/SidePanel";
+import { Toolbar } from "./components/Toolbar";
 import {
-	DIFFICULTIES,
-	type Difficulty,
-	type GameResult,
+	canConfigureGame,
 	getOpponents,
 	getStatusMessage,
-	isEliminated,
-	type RoomSnapshot,
-	spectrumToRows,
+	isHost,
 } from "./display";
-
-const COLORS: Record<string, string> = {
-	" ": "#222",
-	I: "#00f0f0",
-	O: "#f0f000",
-	T: "#a000f0",
-	S: "#00f000",
-	Z: "#f00000",
-	J: "#0000f0",
-	L: "#f0a000",
-	// Indestructible penalty line
-	X: "#777",
-};
-
-/** Delay before a held left/right key starts repeating (ms). */
-const DAS_MS = 170;
-/** Delay between two repeated moves while the key stays held (ms). */
-const ARR_MS = 60;
-
-const GRID_COLS = 10;
-const GRID_ROWS = 20;
-
-export interface GameState {
-	piece: Piece | undefined;
-	grid: string[][];
-	playing: boolean;
-	score: number;
-	lines: number;
-	next: { type: string; shape: string[][] }[];
-	hold: { type: string; shape: string[][] } | null;
-	canHold: boolean;
-}
-
-/** A small preview of a piece shape (next queue). */
-function ShapePreview({ shape }: { shape: string[][] }) {
-	return (
-		<div
-			style={{
-				display: "grid",
-				gridTemplateColumns: `repeat(${shape[0]?.length ?? 0}, 12px)`,
-				gap: "1px",
-				marginBottom: 8,
-			}}
-		>
-			{shape.flatMap((row, y) =>
-				row.map((cell, x) => (
-					<div
-						// biome-ignore lint/suspicious/noArrayIndexKey: cells are fixed by position
-						key={`${y}-${x}`}
-						style={{
-							width: 12,
-							height: 12,
-							backgroundColor: cell === " " ? "transparent" : COLORS[cell],
-						}}
-					/>
-				)),
-			)}
-		</div>
-	);
-}
-
-export interface Piece {
-	shape: string[][];
-	pos: { x: number; y: number };
-}
+import { useElapsedSeconds } from "./hooks/useElapsedSeconds";
+import { useGameConnection } from "./hooks/useGameConnection";
+import { useKeyboardControls } from "./hooks/useKeyboardControls";
 
 export function Game({
 	roomId,
@@ -83,421 +19,35 @@ export function Game({
 	roomId: string;
 	username: string;
 }) {
-	const [gameState, setGameState] = useState<GameState>({
-		piece: undefined,
-		grid: Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(" ")),
-		playing: false,
-		score: 0,
-		lines: 0,
-		next: [],
-		hold: null,
-		canHold: true,
-	});
+	const { gameState, room, result, myId, connectionError, send } =
+		useGameConnection(roomId, username);
+	const canPlay = gameState.playing && gameState.piece !== undefined;
+	const elapsedSeconds = useElapsedSeconds(gameState.playing);
+	useKeyboardControls(send, canPlay);
 
-	const [socket, setSocket] = useState<Socket | null>(null);
-	const [room, setRoom] = useState<RoomSnapshot | null>(null);
-	const [result, setResult] = useState<GameResult | null>(null);
-	const [myId, setMyId] = useState<string | undefined>(undefined);
-	const [connectionError, setConnectionError] = useState<string | null>(null);
-	const socketRef = useRef(socket);
-	const gameStateRef = useRef(gameState);
-	// Auto-repeat timers of the held horizontal keys.
-	const repeatTimersRef = useRef(
-		new Map<"left" | "right", ReturnType<typeof setTimeout>>(),
-	);
-
-	useEffect(() => {
-		socketRef.current = socket;
-	}, [socket]);
-
-	useEffect(() => {
-		gameStateRef.current = gameState;
-	}, [gameState]);
-
-	const [timer, setTimer] = useState(0);
-	const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-	useEffect(() => {
-		if (gameState.playing) {
-			setTimer(0);
-			timerRef.current = setInterval(() => {
-				setTimer((t) => t + 1);
-			}, 1000);
-		} else {
-			if (timerRef.current) clearInterval(timerRef.current);
-			timerRef.current = null;
-		}
-		return () => {
-			if (timerRef.current) clearInterval(timerRef.current);
-		};
-	}, [gameState.playing]);
-
-	const isDisabled = !gameState.playing || !gameState.piece;
-
-	const startGame = useCallback(() => {
-		socket?.emit("start");
-	}, [socket]);
-
-	const rotate = useCallback(() => {
-		socket?.emit("rotate", "cw");
-	}, [socket]);
-
-	const rotateBack = useCallback(() => {
-		socket?.emit("rotate", "ccw");
-	}, [socket]);
-
-	const moveLeft = useCallback(() => {
-		socket?.emit("move", "left");
-	}, [socket]);
-
-	const moveRight = useCallback(() => {
-		socket?.emit("move", "right");
-	}, [socket]);
-
-	const softDrop = useCallback(() => {
-		socket?.emit("softDrop");
-	}, [socket]);
-
-	const hold = useCallback(() => {
-		socket?.emit("hold");
-	}, [socket]);
-
-	const changeDifficulty = useCallback(
-		(difficulty: Difficulty) => {
-			socket?.emit("difficulty", difficulty);
-		},
-		[socket],
-	);
-
-	const hardDrop = useCallback(() => {
-		socket?.emit("hardDrop");
-	}, [socket]);
-
-	useEffect(() => {
-		const timers = repeatTimersRef.current;
-
-		// One move on press, then auto-repeat only once the key has been held
-		// for DAS_MS (like the official games). Before, a shared 150 ms timer
-		// could fire right after the press and move the piece twice.
-		const startRepeat = (direction: "left" | "right") => {
-			socketRef.current?.emit("move", direction);
-			const repeat = () => {
-				socketRef.current?.emit("move", direction);
-				timers.set(direction, setTimeout(repeat, ARR_MS));
-			};
-			timers.set(direction, setTimeout(repeat, DAS_MS));
-		};
-
-		const stopRepeat = (direction: "left" | "right") => {
-			clearTimeout(timers.get(direction));
-			timers.delete(direction);
-		};
-
-		const handleKeyDown = (e: KeyboardEvent) => {
-			const s = socketRef.current;
-			const currentState = gameStateRef.current;
-			if (!currentState.playing || !currentState.piece) return;
-
-			if (
-				["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(e.key)
-			) {
-				e.preventDefault();
-			}
-			// Holding a key fires keydown again and again: ignore those.
-			if (e.repeat) return;
-
-			if (e.key === "ArrowUp" || e.key === "x" || e.key === "X") {
-				s?.emit("rotate", "cw");
-			} else if (e.key === "z" || e.key === "Z") {
-				s?.emit("rotate", "ccw");
-			} else if (e.key === "ArrowLeft") {
-				stopRepeat("right");
-				startRepeat("left");
-			} else if (e.key === "ArrowRight") {
-				stopRepeat("left");
-				startRepeat("right");
-			} else if (e.key === "ArrowDown") {
-				// Held: the server makes the piece fall faster instead of gravity.
-				s?.emit("softDrop", true);
-			} else if (e.key === "c" || e.key === "C" || e.key === "Shift") {
-				s?.emit("hold");
-			} else if (e.key === " ") {
-				s?.emit("hardDrop");
-			}
-		};
-
-		const handleKeyUp = (e: KeyboardEvent) => {
-			if (e.key === "ArrowLeft") stopRepeat("left");
-			if (e.key === "ArrowRight") stopRepeat("right");
-			if (e.key === "ArrowDown") socketRef.current?.emit("softDrop", false);
-		};
-
-		// Releasing a key outside the window never fires keyup.
-		const handleBlur = () => {
-			stopRepeat("left");
-			stopRepeat("right");
-			socketRef.current?.emit("softDrop", false);
-		};
-
-		window.addEventListener("keydown", handleKeyDown);
-		window.addEventListener("keyup", handleKeyUp);
-		window.addEventListener("blur", handleBlur);
-		return () => {
-			window.removeEventListener("keydown", handleKeyDown);
-			window.removeEventListener("keyup", handleKeyUp);
-			window.removeEventListener("blur", handleBlur);
-			stopRepeat("left");
-			stopRepeat("right");
-		};
-	}, []);
-
-	// Drop shadow / ghost piece calculation
-	const ghostY = (() => {
-		if (!gameState.piece || !gameState.grid) return 0;
-		const { shape, pos } = gameState.piece;
-		let y = pos.y;
-		while (true) {
-			const nextY = y + 1;
-			let collision = false;
-			for (let ry = 0; ry < shape.length; ry++) {
-				for (let rx = 0; rx < shape[ry].length; rx++) {
-					if (shape[ry][rx] !== " ") {
-						const gy = nextY + ry;
-						const gx = pos.x + rx;
-						if (
-							gy >= 20 ||
-							(gx >= 0 && gx < 10 && gameState.grid[gy][gx] !== " ")
-						) {
-							collision = true;
-							break;
-						}
-					}
-				}
-				if (collision) break;
-			}
-			if (collision) {
-				return y;
-			}
-			y = nextY;
-		}
-		return y;
-	})();
-
-	const opponents = getOpponents(room, myId);
 	const statusMessage = getStatusMessage(room, result, myId);
-
-	useEffect(() => {
-		const s = io({ auth: { roomId, username } });
-		setSocket(s);
-		s.on("welcome", (info: { playerId: string }) => setMyId(info.playerId));
-		s.on("gameState", (state: GameState) => setGameState(state));
-		s.on("room", (snapshot: RoomSnapshot) => {
-			setRoom(snapshot);
-			// A new game started: forget the previous result.
-			if (snapshot.status === "playing") setResult(null);
-		});
-		s.on("gameEnd", (gameResult: GameResult) => setResult(gameResult));
-		s.on("connectionError", (error: { message: string }) =>
-			setConnectionError(error.message),
-		);
-		return () => {
-			s.disconnect();
-		};
-	}, [roomId, username]);
 
 	return (
 		<div>
 			<h2>
 				Room: {roomId} | Player: {username}
-				{room && room.hostId === myId ? " (host)" : ""}
+				{isHost(room, myId) ? " (host)" : ""}
 			</h2>
-			<div
-				style={{
-					display: "flex",
-					gap: 8,
-					flexWrap: "wrap",
-					alignItems: "center",
-				}}
-			>
-				<button
-					type="button"
-					onClick={startGame}
-					disabled={room?.status !== "waiting" || room.hostId !== myId}
-				>
-					Start Game
-				</button>
-				<button type="button" onClick={rotateBack} disabled={isDisabled}>
-					Rotate ↺
-				</button>
-				<button type="button" onClick={rotate} disabled={isDisabled}>
-					Rotate ↻
-				</button>
-				<button type="button" onClick={moveLeft} disabled={isDisabled}>
-					←
-				</button>
-				<button type="button" onClick={moveRight} disabled={isDisabled}>
-					→
-				</button>
-				<button type="button" onClick={softDrop} disabled={isDisabled}>
-					↓
-				</button>
-				<button type="button" onClick={hardDrop} disabled={isDisabled}>
-					Hard Drop
-				</button>
-				<button
-					type="button"
-					onClick={hold}
-					disabled={isDisabled || !gameState.canHold}
-				>
-					Hold
-				</button>
-				<label>
-					Difficulty:{" "}
-					<select
-						value={room?.difficulty ?? "medium"}
-						onChange={(e) => changeDifficulty(e.target.value as Difficulty)}
-						disabled={room?.status !== "waiting" || room.hostId !== myId}
-					>
-						{DIFFICULTIES.map((difficulty) => (
-							<option key={difficulty} value={difficulty}>
-								{difficulty}
-							</option>
-						))}
-					</select>
-				</label>
-				{gameState.playing && <span>Timer: {timer}s</span>}
-			</div>
-
+			<Toolbar
+				send={send}
+				canConfigure={canConfigureGame(room, myId)}
+				canPlay={canPlay}
+				canHold={gameState.canHold}
+				difficulty={room?.difficulty ?? "medium"}
+				elapsedSeconds={gameState.playing ? elapsedSeconds : null}
+			/>
 			<div style={{ display: "flex", gap: 16, marginTop: 10 }}>
-				<div
-					style={{
-						display: "grid",
-						gridTemplateColumns: `repeat(${GRID_COLS}, 20px)`,
-						gap: "1px",
-					}}
-				>
-					{gameState.grid.map((row, rowIndex) =>
-						row.map((cell, colIndex) => {
-							// Ghost/drop shadow
-							let ghostChar = " ";
-							if (gameState.piece && ghostY > (gameState.piece?.pos.y ?? 0)) {
-								const { shape } = gameState.piece;
-								for (let y = 0; y < shape.length; y++) {
-									for (let x = 0; x < shape[y].length; x++) {
-										if (
-											shape[y][x] !== " " &&
-											rowIndex === ghostY + y &&
-											colIndex === gameState.piece!.pos.x + x
-										) {
-											ghostChar = shape[y][x];
-										}
-									}
-								}
-							}
-
-							let pieceChar = " ";
-							if (gameState.piece) {
-								const { shape, pos } = gameState.piece;
-								for (let y = 0; y < shape.length; y++) {
-									for (let x = 0; x < shape[y].length; x++) {
-										if (
-											shape[y][x] !== " " &&
-											rowIndex === pos.y + y &&
-											colIndex === pos.x + x
-										) {
-											pieceChar = shape[y][x];
-										}
-									}
-								}
-							}
-							const isGhost = ghostChar !== " ";
-							const cellValue =
-								pieceChar !== " " ? pieceChar : isGhost ? ghostChar : cell;
-							return (
-								<div
-									// biome-ignore lint/suspicious/noArrayIndexKey: grid cells are fixed by position
-									key={`${rowIndex}-${colIndex}`}
-									style={{
-										width: "20px",
-										height: "20px",
-										backgroundColor: COLORS[cellValue] ?? "#222",
-										opacity: isGhost && pieceChar === " " ? 0.5 : 1,
-									}}
-								/>
-							);
-						}),
-					)}
-				</div>
-				<div>
-					<div>Score: {gameState.score}</div>
-					<div>Lines: {gameState.lines}</div>
-					<h4>Hold</h4>
-					<div style={{ opacity: gameState.canHold ? 1 : 0.4 }}>
-						{gameState.hold ? (
-							<ShapePreview shape={gameState.hold.shape} />
-						) : (
-							<div>(empty)</div>
-						)}
-					</div>
-					<h4>Next</h4>
-					{gameState.next.map((piece, index) => (
-						// biome-ignore lint/suspicious/noArrayIndexKey: the queue order is the identity
-						<ShapePreview key={index} shape={piece.shape} />
-					))}
-				</div>
+				<Board grid={gameState.grid} piece={gameState.piece} />
+				<SidePanel state={gameState} />
 			</div>
-
 			{statusMessage && <p>{statusMessage}</p>}
 			{connectionError && <p>{connectionError}</p>}
-
-			<h3>Opponents</h3>
-			{opponents.length === 0 && <p>No one else in this room.</p>}
-			<div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-				{opponents.map((opponent) => (
-					<div key={opponent.id}>
-						<div>
-							{opponent.username} ({opponent.score})
-							{opponent.id === room?.hostId ? " (host)" : ""}
-							{!opponent.connected ? " (disconnected)" : ""}
-							{!opponent.inGame && room?.status === "playing"
-								? " (waiting)"
-								: !opponent.alive && room?.status === "playing"
-									? " (out)"
-									: ""}
-						</div>
-						<div
-							aria-disabled={isEliminated(opponent)}
-							style={{
-								display: "grid",
-								gridTemplateColumns: `repeat(${GRID_COLS}, 6px)`,
-								gap: "1px",
-								// Eliminated: greyed out and red.
-								opacity: isEliminated(opponent) ? 0.5 : 1,
-							}}
-						>
-							{spectrumToRows(opponent.spectrum, GRID_ROWS).flatMap((row, y) =>
-								row.map((filled, x) => (
-									<div
-										// biome-ignore lint/suspicious/noArrayIndexKey: cells are fixed by position
-										key={`${y}-${x}`}
-										style={{
-											width: 6,
-											height: 6,
-											backgroundColor: isEliminated(opponent)
-												? filled
-													? "#d33"
-													: "#411"
-												: filled
-													? "#aaa"
-													: "#222",
-										}}
-									/>
-								)),
-							)}
-						</div>
-					</div>
-				))}
-			</div>
+			<Opponents opponents={getOpponents(room, myId)} room={room} />
 		</div>
 	);
 }

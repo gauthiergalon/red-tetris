@@ -13,7 +13,6 @@ function makePlayer(type: PieceType = "O"): Player {
 	return player;
 }
 
-/** Fills row `y` with blocks, except the given columns. */
 function fillRow(player: Player, y: number, except: number[] = []): void {
 	player.grid[y] = player.grid[y].map((_, x) =>
 		except.includes(x) ? " " : "Z",
@@ -63,9 +62,7 @@ describe("Player", () => {
 		const first = player.tick();
 		expect(first).toEqual({ changed: true, locked: false, cleared: 0 });
 
-		while (player.softDrop()) {
-			// fall to the floor without locking
-		}
+		while (player.softDrop()) {}
 		expect(player.sequenceIndex).toBe(1);
 
 		const lock = player.tick();
@@ -76,7 +73,7 @@ describe("Player", () => {
 
 	it("reports cleared lines on hard drop", () => {
 		const player = makePlayer();
-		// O spawns on columns 4 and 5: leave them free on the last two rows.
+
 		fillRow(player, GRID_ROWS - 1, [4, 5]);
 		fillRow(player, GRID_ROWS - 2, [4, 5]);
 		const result = player.hardDrop();
@@ -86,8 +83,7 @@ describe("Player", () => {
 
 	it("dies when the next piece cannot spawn", () => {
 		const player = makePlayer();
-		// A block on row 2 stops the O at the top: it locks there, and the next O
-		// spawns on top of it.
+
 		fillRow(player, 2, [0]);
 		player.hardDrop();
 		expect(player.alive).toBe(false);
@@ -104,9 +100,7 @@ describe("Player", () => {
 
 	it("pushes its piece up when a penalty line reaches it", () => {
 		const player = makePlayer();
-		while (player.softDrop()) {
-			// down to the floor
-		}
+		while (player.softDrop()) {}
 		const y = player.piece?.pos.y ?? 0;
 		player.receivePenalty(1);
 		expect(player.alive).toBe(true);
@@ -132,7 +126,7 @@ describe("Player: score and next pieces", () => {
 		const player = makePlayer();
 		fillRow(player, GRID_ROWS - 1, [4, 5]);
 		fillRow(player, GRID_ROWS - 2, [4, 5]);
-		const rows = GRID_ROWS - 2; // the O falls from row 0 to row 18
+		const rows = GRID_ROWS - 2;
 		player.hardDrop();
 		expect(player.lines).toBe(2);
 		expect(player.score).toBe(2 * rows + 300);
@@ -195,20 +189,20 @@ describe("Player: hold", () => {
 
 	it("swaps with the held piece, which restarts from the spawn position", () => {
 		const player = sequencePlayer();
-		player.hold(); // holds T, plays I
-		player.hardDrop(); // plays L
+		player.hold();
+		player.hardDrop();
 		player.move("left");
 		expect(player.hold()).toBe(true);
 		expect(player.piece?.type).toBe("T");
 		expect(player.piece?.pos).toEqual({ x: 3, y: 0 });
 		expect(player.held).toBe("L");
-		// The swap did not consume the sequence.
+
 		expect(player.sequenceIndex).toBe(3);
 	});
 
 	it("is refused when dead, and dies if the held piece cannot appear", () => {
 		const player = sequencePlayer();
-		player.hold(); // holds T
+		player.hold();
 		player.hardDrop();
 		player.grid[1] = player.grid[1].map(() => "Z");
 		expect(player.hold()).toBe(true);

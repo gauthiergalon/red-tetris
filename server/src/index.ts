@@ -1,4 +1,3 @@
-// Entry point: starts the server (the logic lives in server.ts).
 import { createRedTetrisServer } from "./server.ts";
 
 const PORT = Number(process.env.PORT ?? 3000);

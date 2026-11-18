@@ -33,7 +33,6 @@ function piece(type: PieceData["type"], x: number, y: number): PieceData {
 	return { type, shape: getShape(type), pos: { x, y }, rotationState: 0 };
 }
 
-/** Grid whose last rows are given as strings ("." = empty). */
 function gridWithBottom(...rows: string[]) {
 	const grid = createEmptyGrid();
 	rows.forEach((row, i) => {
@@ -126,7 +125,6 @@ describe("computeSpectrum", () => {
 	});
 
 	it("gives the height of the highest block of each column", () => {
-		// Column 0 has a block 3 rows high with a hole below it.
 		const grid = gridWithBottom("T.........", "..........", "XXXXXXXXXX");
 		const spectrum = computeSpectrum(grid);
 		expect(spectrum[0]).toBe(3);
@@ -235,8 +233,6 @@ describe("SRS (official rotation system)", () => {
 	});
 
 	it("uses the official kick tables with y flipped for a y-down board", () => {
-		// Guideline 0->R for J, L, S, T, Z: (0,0) (-1,0) (-1,+1) (0,-2) (-1,-2)
-		// with y up. On our board, +1 up becomes -1.
 		expect(kicksFor("T", 0, "cw")).toEqual([
 			{ x: 0, y: 0 },
 			{ x: -1, y: 0 },
@@ -244,7 +240,7 @@ describe("SRS (official rotation system)", () => {
 			{ x: 0, y: 2 },
 			{ x: -1, y: 2 },
 		]);
-		// Guideline 0->R for I: (0,0) (-2,0) (+1,0) (-2,-1) (+1,+2).
+
 		expect(kicksFor("I", 0, "cw")[4]).toEqual({ x: 1, y: -2 });
 	});
 
@@ -258,16 +254,14 @@ describe("SRS (official rotation system)", () => {
 				});
 			}
 		}
-		// Guideline 0->L for J, L, S, T, Z: (0,0) (+1,0) (+1,+1) (0,-2) (+1,-2).
+
 		expect(kicksFor("T", 0, "ccw")[2]).toEqual({ x: 1, y: -1 });
 	});
 
 	it("kicks a T up (not down) when rotating against the floor", () => {
-		// T in state 0 resting on the floor: rows 18-19, columns 4-6.
 		const t = { ...piece("T", 4, GRID_ROWS - 2) };
 		const result = rotateWithKicks(createEmptyGrid(), t, "cw");
-		// (0,0) and (-1,0) leave the R shape out of the board; the third test
-		// moves it one column left and one row UP.
+
 		expect(result?.pos).toEqual({ x: 3, y: GRID_ROWS - 3 });
 		expect(result?.rotationState).toBe(1);
 	});
