@@ -569,3 +569,45 @@ describe("Game: hold and difficulty", () => {
 		expect(getPlayer(game, "a").piece?.pos.y).toBe(y + 1);
 	});
 });
+
+describe("Game: tick edge cases", () => {
+	function clockedGame(names: string[]) {
+		const clock = { time: 0 };
+		const rec = recorder();
+		const game = new Game("room", rec.listener, {
+			now: () => clock.time,
+			countdownMs: 0,
+			random: () => 0,
+		});
+		for (const name of names) game.join(name, name);
+		game.start(names[0]);
+		return { game, clock, ...rec };
+	}
+
+	it("skips eliminated players and keeps the others falling", () => {
+		const { game, clock } = clockedGame(["a", "b", "c"]);
+		prepareRows(game, "c", GRID_ROWS - 2, [0]);
+		game.handleAction("c", { type: "hardDrop" });
+		expect(getPlayer(game, "c").alive).toBe(false);
+		expect(game.status).toBe("playing");
+
+		const deadPiece = getPlayer(game, "c").piece;
+		const y = getPlayer(game, "b").piece?.pos.y ?? 0;
+		clock.time = BASE_GRAVITY_MS.medium;
+		game.tick();
+		expect(getPlayer(game, "b").piece?.pos.y).toBe(y + 1);
+		expect(getPlayer(game, "c").piece).toBe(deadPiece);
+	});
+
+	it("stops the tick as soon as the game ends during it", () => {
+		const { game, clock, ends } = clockedGame(["a", "b"]);
+		// Alice's piece cannot fall: this tick locks it and she dies.
+		prepareRows(game, "a", GRID_ROWS - 2, [0]);
+		const bobPiece = getPlayer(game, "b").piece;
+		clock.time = BASE_GRAVITY_MS.medium;
+		game.tick();
+		expect(ends).toEqual([{ winner: { id: "b", username: "b" } }]);
+		// Bob, after Alice in the loop, did not move once the game was over.
+		expect(getPlayer(game, "b").piece).toBe(bobPiece);
+	});
+});

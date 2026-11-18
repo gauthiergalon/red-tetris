@@ -54,6 +54,11 @@ describe("getOpponents", () => {
 });
 
 describe("getStatusMessage", () => {
+	it("shows nothing when back in waiting without a result (reconnection)", () => {
+		const r = room("waiting", [player("a")]);
+		expect(getStatusMessage(r, null, "a")).toBeNull();
+	});
+
 	it("shows nothing before the first game or while playing", () => {
 		expect(getStatusMessage(null, null, "a")).toBeNull();
 		expect(
