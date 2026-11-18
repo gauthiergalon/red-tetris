@@ -1,4 +1,10 @@
-import type { Direction, Grid, PieceType, RotationDirection } from "../game.ts";
+import type {
+	Direction,
+	Grid,
+	PieceData,
+	PieceType,
+	RotationDirection,
+} from "../game.ts";
 import {
 	addPenaltyLines,
 	clearLines,
@@ -6,9 +12,12 @@ import {
 	createEmptyGrid,
 	getShape,
 	HARD_DROP_POINTS,
+	isLockedOut,
 	lineClearScore,
 	mergePiece,
 	SOFT_DROP_POINTS,
+	toVisiblePosition,
+	visibleRows,
 } from "../game.ts";
 import type { ActionType } from "../throttle.ts";
 import { Piece } from "./Piece.ts";
@@ -28,7 +37,7 @@ export interface PiecePreview {
 
 export interface PlayerState {
 	grid: Grid;
-	piece: Piece | undefined;
+	piece: PieceData | undefined;
 	playing: boolean;
 	score: number;
 	lines: number;
@@ -74,7 +83,7 @@ export class Player {
 	}
 
 	get spectrum(): number[] {
-		return computeSpectrum(this.grid);
+		return computeSpectrum(visibleRows(this.grid));
 	}
 
 	reset(): void {
@@ -93,8 +102,11 @@ export class Player {
 
 	toState(gamePlaying: boolean): PlayerState {
 		return {
-			grid: this.grid,
-			piece: this.piece,
+			grid: visibleRows(this.grid),
+			piece: this.piece && {
+				...this.piece,
+				pos: toVisiblePosition(this.piece.pos),
+			},
 			playing: gamePlaying && this.alive,
 			score: this.score,
 			lines: this.lines,
@@ -192,7 +204,8 @@ export class Player {
 		this.lines += cleared;
 		this.score += lineClearScore(cleared);
 		this.canHold = true;
-		this.#spawnNextPiece();
+		if (isLockedOut(piece)) this.alive = false;
+		else this.#spawnNextPiece();
 		return { changed: true, locked: true, cleared };
 	}
 

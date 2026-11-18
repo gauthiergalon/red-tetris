@@ -15,16 +15,16 @@ export interface PieceData {
 }
 
 export const GRID_COLS = 10;
-export const GRID_ROWS = 20;
+export const VISIBLE_ROWS = 20;
+export const HIDDEN_ROWS = 2;
+export const GRID_ROWS = VISIBLE_ROWS + HIDDEN_ROWS;
 
 export const EMPTY_CELL = " ";
 
 export const PENALTY_CELL = "X";
 
 export function spawnPosition(type: PieceType): Position {
-	if (type === "O") return { x: 4, y: 0 };
-	if (type === "I") return { x: 3, y: -1 };
-	return { x: 3, y: 0 };
+	return { x: type === "O" ? 4 : 3, y: HIDDEN_ROWS - 1 };
 }
 
 export type RotationDirection = "cw" | "ccw";
@@ -196,6 +196,18 @@ export function pieceCells(piece: PieceData): Cell[] {
 
 function isInsideBoard({ x, y }: Position): boolean {
 	return x >= 0 && x < GRID_COLS && y >= 0 && y < GRID_ROWS;
+}
+
+export function visibleRows(grid: Grid): Grid {
+	return grid.slice(HIDDEN_ROWS);
+}
+
+export function toVisiblePosition({ x, y }: Position): Position {
+	return { x, y: y - HIDDEN_ROWS };
+}
+
+export function isLockedOut(piece: PieceData): boolean {
+	return pieceCells(piece).every((cell) => cell.y < HIDDEN_ROWS);
 }
 
 export function mergePiece(grid: Grid, piece: PieceData): Grid {

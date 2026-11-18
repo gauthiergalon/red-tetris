@@ -2,9 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
 	createEmptyRow,
 	GRID_ROWS,
+	HIDDEN_ROWS,
 	PENALTY_CELL,
 	type PieceType,
+	spawnPosition,
+	VISIBLE_ROWS,
 } from "../game.ts";
+import { Piece } from "./Piece.ts";
 import { Player } from "./Player.ts";
 
 function makePlayer(type: PieceType = "O"): Player {
@@ -126,7 +130,7 @@ describe("Player: score and next pieces", () => {
 		const player = makePlayer();
 		fillRow(player, GRID_ROWS - 1, [4, 5]);
 		fillRow(player, GRID_ROWS - 2, [4, 5]);
-		const rows = GRID_ROWS - 2;
+		const rows = GRID_ROWS - 2 - spawnPosition("O").y;
 		player.hardDrop();
 		expect(player.lines).toBe(2);
 		expect(player.score).toBe(2 * rows + 300);
@@ -194,7 +198,7 @@ describe("Player: hold", () => {
 		player.move("left");
 		expect(player.hold()).toBe(true);
 		expect(player.piece?.type).toBe("T");
-		expect(player.piece?.pos).toEqual({ x: 3, y: 0 });
+		expect(player.piece?.pos).toEqual(spawnPosition("T"));
 		expect(player.held).toBe("L");
 
 		expect(player.sequenceIndex).toBe(3);
@@ -216,5 +220,37 @@ describe("Player: hold", () => {
 		player.reset();
 		expect(player.held).toBeNull();
 		expect(player.canHold).toBe(true);
+	});
+});
+
+describe("Player: hidden rows above the board", () => {
+	it("sends only the visible rows, with the piece in visible coordinates", () => {
+		const player = makePlayer("I");
+		const state = player.toState(true);
+		expect(state.grid).toHaveLength(VISIBLE_ROWS);
+		expect(state.piece?.pos.y).toBe((player.piece?.pos.y ?? 0) - HIDDEN_ROWS);
+		expect(player.piece?.pos.y).toBe(spawnPosition("I").y);
+	});
+
+	it("keeps blocks pushed into the hidden rows by penalties", () => {
+		const player = makePlayer();
+		player.grid[HIDDEN_ROWS][0] = "Z";
+		player.receivePenalty(1);
+		expect(player.alive).toBe(true);
+		expect(player.grid[HIDDEN_ROWS - 1][0]).toBe("Z");
+		expect(player.toState(true).grid[0][0]).toBe(" ");
+		expect(player.spectrum[0]).toBe(1);
+	});
+
+	it("loses by lock out: a piece locked entirely in the hidden rows", () => {
+		const player = makePlayer();
+		for (let y = HIDDEN_ROWS; y < GRID_ROWS; y++) {
+			player.grid[y][0] = "Z";
+			player.grid[y][1] = "Z";
+		}
+		player.piece = player.piece?.translated(-4, -1);
+		player.hardDrop();
+		expect(Piece.spawn("O").collides(player.grid)).toBe(false);
+		expect(player.alive).toBe(false);
 	});
 });

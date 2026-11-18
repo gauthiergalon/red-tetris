@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { createEmptyGrid, GRID_ROWS, spawnPosition } from "../game.ts";
+import {
+	createEmptyGrid,
+	GRID_ROWS,
+	HIDDEN_ROWS,
+	pieceCells,
+	spawnPosition,
+} from "../game.ts";
 import { Piece } from "./Piece.ts";
 
 describe("Piece", () => {
@@ -23,11 +29,14 @@ describe("Piece", () => {
 		expect(piece.moved(createEmptyGrid(), "left")).toBeNull();
 	});
 
-	it("spawns like the official games: O in the middle, I on the top row", () => {
-		expect(Piece.spawn("O").pos).toEqual({ x: 4, y: 0 });
-		const i = Piece.spawn("I");
-		expect(i.collides(createEmptyGrid())).toBe(false);
-		expect(i.pos.y + 1).toBe(0);
+	it("spawns like the official games: lowest row on the top visible row", () => {
+		expect(Piece.spawn("O").pos).toEqual({ x: 4, y: HIDDEN_ROWS - 1 });
+		for (const type of ["I", "O", "T"] as const) {
+			const piece = Piece.spawn(type);
+			const rows = pieceCells(piece).map((cell) => cell.y);
+			expect(Math.max(...rows)).toBe(HIDDEN_ROWS);
+			expect(piece.collides(createEmptyGrid())).toBe(false);
+		}
 	});
 
 	it("rotates, or returns null when blocked", () => {
