@@ -10,6 +10,8 @@ const COLORS: Record<string, string> = {
 	Z: "#f00000",
 	J: "#0000f0",
 	L: "#f0a000",
+	// Indestructible penalty line
+	X: "#777",
 };
 
 const GRID_COLS = 10;
