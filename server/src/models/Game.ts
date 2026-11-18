@@ -1,5 +1,6 @@
 import type { Direction, PieceType } from "../game.ts";
 import { generateBag, penaltyFor } from "../game.ts";
+import { type ActionType, canAct } from "../throttle.ts";
 import { Player, type PlayerState, type StepResult } from "./Player.ts";
 
 export type GameStatus = "waiting" | "playing";
@@ -14,6 +15,8 @@ export interface PlayerSummary {
 	id: string;
 	username: string;
 	alive: boolean;
+	/** False for a player who joined during the game and waits for the next. */
+	inGame: boolean;
 	spectrum: number[];
 }
 
@@ -46,6 +49,8 @@ export type JoinResult =
 export interface GameOptions {
 	maxPlayers?: number;
 	random?: () => number;
+	/** Clock used by the action throttle; injectable for tests. */
+	now?: () => number;
 }
 
 /**
@@ -66,12 +71,14 @@ export class Game {
 	#multiplayer = false;
 	readonly #random: () => number;
 	readonly #listener: GameListener;
+	readonly #now: () => number;
 
 	constructor(id: string, listener: GameListener, options: GameOptions = {}) {
 		this.id = id;
 		this.#listener = listener;
 		this.maxPlayers = options.maxPlayers ?? 8;
 		this.#random = options.random ?? Math.random;
+		this.#now = options.now ?? Date.now;
 	}
 
 	get isPlaying(): boolean {
@@ -90,10 +97,11 @@ export class Game {
 		return this.#sequence[index];
 	}
 
+	/**
+	 * Adds a player. During a game the player is accepted but waits: it is not
+	 * alive and not in the game, and takes part in the next start.
+	 */
 	join(id: string, username: string): JoinResult {
-		if (this.isPlaying) {
-			return { ok: false, reason: "A game is already in progress." };
-		}
 		if (this.players.size >= this.maxPlayers) {
 			return { ok: false, reason: "This room is full." };
 		}
@@ -147,6 +155,11 @@ export class Game {
 		const player = this.players.get(playerId);
 		if (!this.isPlaying || !player?.alive) return false;
 
+		// Server-side limit: each action type has a minimum interval.
+		const now = this.#now();
+		if (!canAct(player.lastActionAt, action.type, now)) return false;
+		player.lastActionAt[action.type satisfies ActionType] = now;
+
 		switch (action.type) {
 			case "move":
 				return this.#applyMove(player, player.move(action.direction));
@@ -177,6 +190,7 @@ export class Game {
 				id: player.id,
 				username: player.username,
 				alive: player.alive,
+				inGame: player.inGame,
 				spectrum: player.spectrum,
 			})),
 		};

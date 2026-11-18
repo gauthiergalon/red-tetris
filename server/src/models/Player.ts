@@ -6,6 +6,7 @@ import {
 	createEmptyGrid,
 	mergePiece,
 } from "../game.ts";
+import type { ActionType } from "../throttle.ts";
 import { Piece } from "./Piece.ts";
 
 /** Gives the piece type at a given index of the game's shared sequence. */
@@ -44,6 +45,10 @@ export class Player {
 	grid: Grid = createEmptyGrid();
 	piece: Piece | undefined = undefined;
 	alive = false;
+	/** True once the player took part in a game (false while waiting). */
+	inGame = false;
+	/** Last accepted time (ms) of each action type, for the throttle. */
+	lastActionAt: Partial<Record<ActionType, number>> = {};
 	/** Index of the next piece to take from the game's sequence. */
 	sequenceIndex = 0;
 	readonly #pieceSource: PieceSource;
@@ -63,6 +68,8 @@ export class Player {
 		this.grid = createEmptyGrid();
 		this.sequenceIndex = 0;
 		this.alive = true;
+		this.inGame = true;
+		this.lastActionAt = {};
 		this.#spawnNextPiece();
 	}
 

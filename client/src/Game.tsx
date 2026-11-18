@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
+import {
+	type GameResult,
+	getOpponents,
+	getStatusMessage,
+	type RoomSnapshot,
+	spectrumToRows,
+} from "./display";
 
 const COLORS: Record<string, string> = {
 	" ": "#222",
@@ -44,6 +51,10 @@ export function Game({
 	});
 
 	const [socket, setSocket] = useState<Socket | null>(null);
+	const [room, setRoom] = useState<RoomSnapshot | null>(null);
+	const [result, setResult] = useState<GameResult | null>(null);
+	const [myId, setMyId] = useState<string | undefined>(undefined);
+	const [connectionError, setConnectionError] = useState<string | null>(null);
 	const socketRef = useRef(socket);
 	const gameStateRef = useRef(gameState);
 	const pressedKeysRef = useRef(new Set<string>());
@@ -188,10 +199,23 @@ export function Game({
 		return y;
 	})();
 
+	const opponents = getOpponents(room, myId);
+	const statusMessage = getStatusMessage(room, result, myId);
+
 	useEffect(() => {
 		const s = io({ auth: { roomId, username } });
 		setSocket(s);
+		s.on("connect", () => setMyId(s.id));
 		s.on("gameState", (state: GameState) => setGameState(state));
+		s.on("room", (snapshot: RoomSnapshot) => {
+			setRoom(snapshot);
+			// A new game started: forget the previous result.
+			if (snapshot.status === "playing") setResult(null);
+		});
+		s.on("gameEnd", (gameResult: GameResult) => setResult(gameResult));
+		s.on("connectionError", (error: { message: string }) =>
+			setConnectionError(error.message),
+		);
 		return () => {
 			s.disconnect();
 		};
@@ -199,7 +223,10 @@ export function Game({
 
 	return (
 		<div>
-			<h2>Tetris Game</h2>
+			<h2>
+				Tetris Game: {username}
+				{room && room.hostId === myId ? " (host)" : ""}
+			</h2>
 			<div
 				style={{
 					display: "flex",
@@ -208,7 +235,11 @@ export function Game({
 					alignItems: "center",
 				}}
 			>
-				<button type="button" onClick={startGame} disabled={gameState.playing}>
+				<button
+					type="button"
+					onClick={startGame}
+					disabled={room?.status !== "waiting" || room.hostId !== myId}
+				>
 					Start Game
 				</button>
 				<button type="button" onClick={rotate} disabled={isDisabled}>
@@ -290,11 +321,47 @@ export function Game({
 				)}
 			</div>
 
-			{!gameState.playing && (
-				<p style={{ marginTop: 8, color: "#ff4444", fontWeight: "bold" }}>
-					Game Over
-				</p>
-			)}
+			{statusMessage && <p>{statusMessage}</p>}
+			{connectionError && <p>{connectionError}</p>}
+
+			<h3>Opponents</h3>
+			{opponents.length === 0 && <p>No one else in this room.</p>}
+			<div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+				{opponents.map((opponent) => (
+					<div key={opponent.id}>
+						<div>
+							{opponent.username}
+							{opponent.id === room?.hostId ? " (host)" : ""}
+							{!opponent.inGame
+								? " (waiting)"
+								: !opponent.alive && room?.status === "playing"
+									? " (out)"
+									: ""}
+						</div>
+						<div
+							style={{
+								display: "grid",
+								gridTemplateColumns: `repeat(${GRID_COLS}, 6px)`,
+								gap: "1px",
+							}}
+						>
+							{spectrumToRows(opponent.spectrum, GRID_ROWS).flatMap((row, y) =>
+								row.map((filled, x) => (
+									<div
+										// biome-ignore lint/suspicious/noArrayIndexKey: cells are fixed by position
+										key={`${y}-${x}`}
+										style={{
+											width: 6,
+											height: 6,
+											backgroundColor: filled ? "#aaa" : "#222",
+										}}
+									/>
+								)),
+							)}
+						</div>
+					</div>
+				))}
+			</div>
 		</div>
 	);
 }

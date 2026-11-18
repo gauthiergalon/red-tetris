@@ -23,8 +23,14 @@ function recorder() {
 
 function makeGame(maxPlayers = 8) {
 	const rec = recorder();
-	// Fixed random: the sequence is deterministic in tests.
-	const game = new Game("room", rec.listener, { maxPlayers, random: () => 0 });
+	// Fixed random: the sequence is deterministic in tests. The clock moves
+	// 1 s per call, so the action throttle never gets in the way.
+	let time = 0;
+	const game = new Game("room", rec.listener, {
+		maxPlayers,
+		random: () => 0,
+		now: () => (time += 1000),
+	});
 	return { game, ...rec };
 }
 
@@ -65,16 +71,38 @@ describe("Game: joining and hosting", () => {
 		expect(result.ok).toBe(false);
 	});
 
-	it("refuses players while a game is in progress", () => {
+	it("lets a player join during a game as a waiting player", () => {
+		const { game, rooms } = makeGame();
+		game.join("a", "alice");
+		game.join("b", "bob");
+		game.start("a");
+		expect(game.join("c", "carol").ok).toBe(true);
+
+		const carol = game.players.get("c");
+		expect(carol?.alive).toBe(false);
+		expect(rooms.at(-1)?.players.find((p) => p.id === "c")?.inGame).toBe(false);
+		// The waiting player cannot play...
+		expect(game.handleAction("c", { type: "rotate" })).toBe(false);
+		// ...and does not prevent the game from ending.
+		prepareRows(game, "b", GRID_ROWS - 2, [0]);
+		game.handleAction("b", { type: "hardDrop" });
+		expect(game.status).toBe("waiting");
+	});
+
+	it("includes players who joined during a game in the next one", () => {
 		const { game } = makeGame();
 		game.join("a", "alice");
+		game.join("b", "bob");
 		game.start("a");
-		const result = game.join("b", "bob");
-		expect(result).toEqual({
-			ok: false,
-			reason: "A game is already in progress.",
-		});
-		expect(game.players.size).toBe(1);
+		game.join("c", "carol");
+		game.leave("b"); // alice wins, the room goes back to waiting
+
+		expect(game.start("a")).toBe(true);
+		const carol = game.players.get("c");
+		expect(carol?.alive).toBe(true);
+		expect(carol?.inGame).toBe(true);
+		expect(carol?.piece).toBeDefined();
+		expect(game.handleAction("c", { type: "rotate" })).toBe(true);
 	});
 
 	it("gives the host role to the next player when the host leaves", () => {
@@ -231,6 +259,19 @@ describe("Game: penalties and spectrum", () => {
 		expect(countPenaltyRows(game, "a")).toBe(0);
 	});
 
+	it("works the same whichever player clears (not only the host)", () => {
+		const { game } = makeGame();
+		game.join("a", "alice");
+		game.join("b", "bob");
+		game.start("a");
+		fillAroundLanding(game, "b", landingRows(game, "b"));
+
+		game.handleAction("b", { type: "hardDrop" });
+
+		expect(countPenaltyRows(game, "a")).toBe(1);
+		expect(countPenaltyRows(game, "b")).toBe(0);
+	});
+
 	it("sends nothing for a single line", () => {
 		const { game } = makeGame();
 		game.join("a", "alice");
@@ -302,5 +343,28 @@ describe("Game: end of game", () => {
 		game.handleAction("a", { type: "hardDrop" });
 		expect(ends).toEqual([{ winner: null }]);
 		expect(game.status).toBe("waiting");
+	});
+});
+
+describe("Game: server-side action limit", () => {
+	it("refuses an action repeated too fast, accepts it after the delay", () => {
+		let time = 0;
+		const game = new Game("room", recorder().listener, { now: () => time });
+		game.join("a", "alice");
+		game.start("a");
+
+		expect(game.handleAction("a", { type: "move", direction: "left" })).toBe(
+			true,
+		);
+		time += 10;
+		expect(game.handleAction("a", { type: "move", direction: "left" })).toBe(
+			false,
+		);
+		// Another action type has its own delay.
+		expect(game.handleAction("a", { type: "rotate" })).toBe(true);
+		time += 100;
+		expect(game.handleAction("a", { type: "move", direction: "left" })).toBe(
+			true,
+		);
 	});
 });

@@ -8,7 +8,7 @@ export default defineConfig({
 			provider: "v8",
 			// index.ts only wires socket.io to the Game class; the rules live in
 			// game.ts and models/, which are tested directly.
-			include: ["server/src/**/*.ts"],
+			include: ["server/src/**/*.ts", "client/src/**/*.ts"],
 			exclude: ["server/src/index.ts", "**/*.test.ts"],
 			thresholds: {
 				statements: 70,
