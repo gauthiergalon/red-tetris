@@ -11,7 +11,7 @@ export type ActionType = "move" | "rotate" | "softDrop" | "hardDrop" | "hold";
 /** Minimum delay (ms) between two accepted actions of the same type. */
 export const ACTION_INTERVALS_MS: Record<ActionType, number> = {
 	move: 50,
-	rotate: 100,
+	rotate: 50,
 	softDrop: 40,
 	hardDrop: 50,
 	hold: 200,
