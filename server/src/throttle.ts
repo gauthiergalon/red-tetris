@@ -13,7 +13,7 @@ export const ACTION_INTERVALS_MS: Record<ActionType, number> = {
 	move: 50,
 	rotate: 100,
 	softDrop: 40,
-	hardDrop: 200,
+	hardDrop: 50,
 	hold: 200,
 };
 
