@@ -10,12 +10,17 @@ export interface PlayerSummary {
 	spectrum: number[];
 }
 
+export type Difficulty = "easy" | "medium" | "hard";
+
+export const DIFFICULTIES: readonly Difficulty[] = ["easy", "medium", "hard"];
+
 export interface RoomSnapshot {
 	id: string;
 	status: "waiting" | "countdown" | "playing";
 	hostId: string | undefined;
 	/** Seconds left before the start, only during the countdown. */
 	countdown: number | null;
+	difficulty: Difficulty;
 	players: PlayerSummary[];
 }
 

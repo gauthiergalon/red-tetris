@@ -274,6 +274,44 @@ export function addPenaltyLines(
 	};
 }
 
+// -----------------------------------------------------------------------------
+// Difficulty and gravity
+// -----------------------------------------------------------------------------
+
+export type Difficulty = "easy" | "medium" | "hard";
+
+export const DIFFICULTIES: readonly Difficulty[] = ["easy", "medium", "hard"];
+
+/** Delay between two gravity steps at the start of a game (ms). */
+export const BASE_GRAVITY_MS: Record<Difficulty, number> = {
+	easy: 800,
+	medium: 500,
+	hard: 250,
+};
+
+/** Every LINES_PER_LEVEL lines cleared, gravity gets faster. */
+export const LINES_PER_LEVEL = 10;
+/** Factor applied to the delay at each level (20 % faster). */
+export const LEVEL_SPEEDUP = 0.8;
+/** The delay never goes below this (ms). */
+export const MIN_GRAVITY_MS = 50;
+
+export function isDifficulty(value: unknown): value is Difficulty {
+	return (
+		typeof value === "string" && DIFFICULTIES.includes(value as Difficulty)
+	);
+}
+
+/**
+ * Gravity delay for a player: the difficulty sets the starting speed, and
+ * every LINES_PER_LEVEL lines the piece falls 20 % faster.
+ */
+export function gravityDelay(difficulty: Difficulty, lines: number): number {
+	const level = Math.floor(Math.max(0, lines) / LINES_PER_LEVEL);
+	const delay = BASE_GRAVITY_MS[difficulty] * LEVEL_SPEEDUP ** level;
+	return Math.max(MIN_GRAVITY_MS, Math.round(delay));
+}
+
 /** Points for 0, 1, 2, 3 and 4 lines cleared at once (guideline, level 1). */
 export const LINE_CLEAR_SCORES = [0, 100, 300, 500, 800];
 /** Points per row for a soft drop and a hard drop (guideline). */

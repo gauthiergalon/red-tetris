@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import express, { type Express, type Request, type Response } from "express";
 import { Server } from "socket.io";
 
-import { isDirection } from "./game.ts";
+import { isDifficulty, isDirection } from "./game.ts";
 import { Game, type GameListener, type PlayerAction } from "./models/Game.ts";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -184,6 +184,11 @@ io.on("connection", (socket) => {
 		act({ type: "rotate", direction: direction === "ccw" ? "ccw" : "cw" }),
 	);
 	socket.on("hardDrop", () => act({ type: "hardDrop" }));
+	socket.on("hold", () => act({ type: "hold" }));
+	socket.on("difficulty", (difficulty: unknown) => {
+		if (!canProcessAction(socket.id) || !isDifficulty(difficulty)) return;
+		game.setDifficulty(playerId, difficulty);
+	});
 	// softDrop(true/false) = key held/released; softDrop() = one row.
 	socket.on("softDrop", (active: unknown) => {
 		if (typeof active === "boolean") act({ type: "setSoftDrop", active });

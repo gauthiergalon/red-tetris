@@ -35,6 +35,10 @@ export interface PlayerState {
 	lines: number;
 	/** The next pieces of the sequence, in order. */
 	next: { type: PieceType; shape: string[][] }[];
+	/** The piece kept aside with Hold, if any. */
+	hold: { type: PieceType; shape: string[][] } | null;
+	/** False once Hold was used, until the current piece locks. */
+	canHold: boolean;
 }
 
 /** How many upcoming pieces the client can see. */
@@ -66,6 +70,10 @@ export class Player {
 	lastFallAt = 0;
 	/** Last accepted time (ms) of each action type, for the throttle. */
 	lastActionAt: Partial<Record<ActionType, number>> = {};
+	/** Piece kept aside with Hold. */
+	held: PieceType | null = null;
+	/** One Hold per piece: reset to true when a piece locks. */
+	canHold = true;
 	score = 0;
 	/** Total number of lines cleared in the current game. */
 	lines = 0;
@@ -93,6 +101,8 @@ export class Player {
 		this.inGame = true;
 		this.lastActionAt = {};
 		this.softDropping = false;
+		this.held = null;
+		this.canHold = true;
 		this.#spawnNextPiece();
 	}
 
@@ -104,6 +114,8 @@ export class Player {
 			score: this.score,
 			lines: this.lines,
 			next: this.inGame ? this.nextPieces() : [],
+			hold: this.held ? { type: this.held, shape: getShape(this.held) } : null,
+			canHold: this.canHold,
 		};
 	}
 
@@ -128,6 +140,29 @@ export class Player {
 		const next = this.piece.rotated(this.grid, direction);
 		if (!next) return false;
 		this.piece = next;
+		return true;
+	}
+
+	/**
+	 * Hold (guideline): puts the current piece aside and takes the held one,
+	 * or the next piece of the sequence if nothing was held yet. Allowed once
+	 * per piece. The swapped-in piece starts again from the spawn position.
+	 * Returns true when it happened.
+	 */
+	hold(): boolean {
+		if (!this.alive || !this.piece || !this.canHold) return false;
+
+		const current = this.piece.type;
+		if (this.held) {
+			this.piece = Piece.spawn(this.held);
+			if (this.piece.collides(this.grid)) this.alive = false;
+		} else {
+			// Takes the next piece of the sequence, like a normal spawn: every
+			// player keeps reading the same shared sequence in the same order.
+			this.#spawnNextPiece();
+		}
+		this.held = current;
+		this.canHold = false;
 		return true;
 	}
 
@@ -189,6 +224,7 @@ export class Player {
 		this.grid = grid;
 		this.lines += cleared;
 		this.score += lineClearScore(cleared);
+		this.canHold = true;
 		this.#spawnNextPiece();
 		return { changed: true, locked: true, cleared };
 	}

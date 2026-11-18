@@ -166,3 +166,61 @@ describe("Player: score and next pieces", () => {
 		expect(player.lines).toBe(0);
 	});
 });
+
+describe("Player: hold", () => {
+	function sequencePlayer() {
+		const types: PieceType[] = ["T", "I", "L", "J", "S", "Z", "O"];
+		const player = new Player("id", "bob", (i) => types[i % types.length]);
+		player.reset();
+		return player;
+	}
+
+	it("first hold keeps the piece and takes the next one of the sequence", () => {
+		const player = sequencePlayer();
+		expect(player.hold()).toBe(true);
+		expect(player.held).toBe("T");
+		expect(player.piece?.type).toBe("I");
+		expect(player.sequenceIndex).toBe(2);
+		expect(player.toState(true).hold?.type).toBe("T");
+		expect(player.toState(true).canHold).toBe(false);
+	});
+
+	it("allows only one hold per piece, until it locks", () => {
+		const player = sequencePlayer();
+		player.hold();
+		expect(player.hold()).toBe(false);
+		player.hardDrop();
+		expect(player.canHold).toBe(true);
+	});
+
+	it("swaps with the held piece, which restarts from the spawn position", () => {
+		const player = sequencePlayer();
+		player.hold(); // holds T, plays I
+		player.hardDrop(); // plays L
+		player.move("left");
+		expect(player.hold()).toBe(true);
+		expect(player.piece?.type).toBe("T");
+		expect(player.piece?.pos).toEqual({ x: 3, y: 0 });
+		expect(player.held).toBe("L");
+		// The swap did not consume the sequence.
+		expect(player.sequenceIndex).toBe(3);
+	});
+
+	it("is refused when dead, and dies if the held piece cannot appear", () => {
+		const player = sequencePlayer();
+		player.hold(); // holds T
+		player.hardDrop();
+		player.grid[1] = player.grid[1].map(() => "Z");
+		expect(player.hold()).toBe(true);
+		expect(player.alive).toBe(false);
+		expect(player.hold()).toBe(false);
+	});
+
+	it("is cleared by reset", () => {
+		const player = sequencePlayer();
+		player.hold();
+		player.reset();
+		expect(player.held).toBeNull();
+		expect(player.canHold).toBe(true);
+	});
+});

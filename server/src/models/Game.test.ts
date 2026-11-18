@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { GRID_ROWS, PENALTY_CELL } from "../game.ts";
+import { BASE_GRAVITY_MS, GRID_ROWS, PENALTY_CELL } from "../game.ts";
 import {
 	Game,
 	type GameListener,
 	type GameResult,
-	GRAVITY_MS,
 	type RoomSnapshot,
 	SOFT_DROP_MS,
 } from "./Game.ts";
@@ -396,15 +395,15 @@ describe("Game: gravity and soft drop", () => {
 		return { game, clock, y };
 	}
 
-	it("makes the piece fall once per GRAVITY_MS, however often tick runs", () => {
+	it("makes the piece fall once per BASE_GRAVITY_MS.medium, however often tick runs", () => {
 		const { game, clock, y } = clockGame();
 		const start = y();
-		for (let t = 25; t < GRAVITY_MS; t += 25) {
+		for (let t = 25; t < BASE_GRAVITY_MS.medium; t += 25) {
 			clock.time = t;
 			game.tick();
 		}
 		expect(y()).toBe(start);
-		clock.time = GRAVITY_MS;
+		clock.time = BASE_GRAVITY_MS.medium;
 		game.tick();
 		expect(y()).toBe(start + 1);
 	});
@@ -429,7 +428,7 @@ describe("Game: gravity and soft drop", () => {
 		);
 		// Released: back to normal gravity, counted from the release.
 		game.handleAction("a", { type: "setSoftDrop", active: false });
-		clock.time += GRAVITY_MS - 1;
+		clock.time += BASE_GRAVITY_MS.medium - 1;
 		game.tick();
 		expect(y()).toBe(start + 5);
 		clock.time += 1;
@@ -511,5 +510,62 @@ describe("Game: countdown before the start", () => {
 		expect(game.status).toBe("playing");
 		expect(rec.rooms.at(-1)?.countdown).toBeNull();
 		expect(game.players.get("c")?.alive).toBe(true);
+	});
+});
+
+describe("Game: hold and difficulty", () => {
+	it("keeps the shared sequence in sync when a player uses hold", () => {
+		const { game } = makeGame();
+		game.join("a", "alice");
+		game.join("b", "bob");
+		game.start("a");
+		expect(game.handleAction("a", { type: "hold" })).toBe(true);
+		expect(game.handleAction("a", { type: "hold" })).toBe(false);
+		// Alice took the 2nd piece of the sequence; Bob will get the same one.
+		const aliceSecond = getPlayer(game, "a").piece?.type;
+		game.handleAction("b", { type: "hardDrop" });
+		expect(getPlayer(game, "b").piece?.type).toBe(aliceSecond);
+	});
+
+	it("ends the game if a hold kills the last opponent", () => {
+		const { game, ends } = makeGame();
+		game.join("a", "alice");
+		game.join("b", "bob");
+		game.start("a");
+		game.handleAction("b", { type: "hold" });
+		game.handleAction("b", { type: "hardDrop" });
+		const bob = getPlayer(game, "b");
+		bob.grid[1] = bob.grid[1].map(() => "Z");
+		game.handleAction("b", { type: "hold" });
+		expect(bob.alive).toBe(false);
+		expect(ends).toEqual([{ winner: { id: "a", username: "alice" } }]);
+	});
+
+	it("lets only the host change the difficulty, between games", () => {
+		const { game, rooms } = makeGame();
+		game.join("a", "alice");
+		game.join("b", "bob");
+		expect(game.difficulty).toBe("medium");
+		expect(game.setDifficulty("b", "hard")).toBe(false);
+		expect(game.setDifficulty("a", "hard")).toBe(true);
+		expect(rooms.at(-1)?.difficulty).toBe("hard");
+		expect(game.setDifficulty("a", "hard")).toBe(false);
+		game.start("a");
+		expect(game.setDifficulty("a", "easy")).toBe(false);
+	});
+
+	it("uses the difficulty for gravity", () => {
+		const clock = { time: 0 };
+		const game = new Game("room", recorder().listener, {
+			now: () => clock.time,
+			countdownMs: 0,
+		});
+		game.join("a", "alice");
+		game.setDifficulty("a", "hard");
+		game.start("a");
+		const y = getPlayer(game, "a").piece?.pos.y ?? 0;
+		clock.time = BASE_GRAVITY_MS.hard;
+		game.tick();
+		expect(getPlayer(game, "a").piece?.pos.y).toBe(y + 1);
 	});
 });

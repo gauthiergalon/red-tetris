@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	addPenaltyLines,
+	BASE_GRAVITY_MS,
 	clearLines,
 	computeSpectrum,
 	createEmptyGrid,
@@ -10,11 +11,14 @@ import {
 	GRID_ROWS,
 	generateBag,
 	getShape,
+	gravityDelay,
 	isColliding,
+	isDifficulty,
 	isDirection,
 	kicksFor,
 	LINE_CLEAR_SCORES,
 	lineClearScore,
+	MIN_GRAVITY_MS,
 	mergePiece,
 	PENALTY_CELL,
 	PIECE_TYPES,
@@ -285,5 +289,26 @@ describe("lineClearScore", () => {
 		expect(lineClearScore(2)).toBe(300);
 		expect(lineClearScore(4)).toBe(800);
 		expect(lineClearScore(9)).toBe(800);
+	});
+});
+
+describe("gravityDelay (difficulty)", () => {
+	it("starts slower in easy and faster in hard", () => {
+		expect(gravityDelay("easy", 0)).toBe(BASE_GRAVITY_MS.easy);
+		expect(gravityDelay("medium", 0)).toBe(500);
+		expect(gravityDelay("hard", 0)).toBeLessThan(gravityDelay("medium", 0));
+	});
+
+	it("gets 20 % faster every 10 lines, with a floor", () => {
+		expect(gravityDelay("medium", 9)).toBe(500);
+		expect(gravityDelay("medium", 10)).toBe(400);
+		expect(gravityDelay("medium", 20)).toBe(320);
+		expect(gravityDelay("hard", 1000)).toBe(MIN_GRAVITY_MS);
+	});
+
+	it("validates difficulty names", () => {
+		expect(isDifficulty("hard")).toBe(true);
+		expect(isDifficulty("insane")).toBe(false);
+		expect(isDifficulty(3)).toBe(false);
 	});
 });

@@ -46,6 +46,10 @@ export function Home() {
 				<li>Z: rotate counter-clockwise</li>
 				<li>↓ (hold): soft drop, the piece falls faster</li>
 				<li>Space: hard drop, the piece falls at once and locks</li>
+				<li>
+					C or Shift: hold, keeps the current piece aside for later (once per
+					piece)
+				</li>
 			</ul>
 
 			<h2>How to play</h2>
@@ -70,6 +74,11 @@ export function Home() {
 				<li>
 					You lose when a new piece cannot appear. The last player standing
 					wins.
+				</li>
+				<li>
+					Difficulty (chosen by the host before the start): easy, medium or hard
+					sets the starting speed. Every 10 lines you clear, your pieces fall 20
+					% faster.
 				</li>
 				<li>
 					Score: 100 / 300 / 500 / 800 points for 1 / 2 / 3 / 4 lines, plus 1

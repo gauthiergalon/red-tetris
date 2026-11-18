@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import {
+	DIFFICULTIES,
+	type Difficulty,
 	type GameResult,
 	getOpponents,
 	getStatusMessage,
@@ -37,6 +39,8 @@ export interface GameState {
 	score: number;
 	lines: number;
 	next: { type: string; shape: string[][] }[];
+	hold: { type: string; shape: string[][] } | null;
+	canHold: boolean;
 }
 
 /** A small preview of a piece shape (next queue). */
@@ -86,6 +90,8 @@ export function Game({
 		score: 0,
 		lines: 0,
 		next: [],
+		hold: null,
+		canHold: true,
 	});
 
 	const [socket, setSocket] = useState<Socket | null>(null);
@@ -152,6 +158,17 @@ export function Game({
 		socket?.emit("softDrop");
 	}, [socket]);
 
+	const hold = useCallback(() => {
+		socket?.emit("hold");
+	}, [socket]);
+
+	const changeDifficulty = useCallback(
+		(difficulty: Difficulty) => {
+			socket?.emit("difficulty", difficulty);
+		},
+		[socket],
+	);
+
 	const hardDrop = useCallback(() => {
 		socket?.emit("hardDrop");
 	}, [socket]);
@@ -202,6 +219,8 @@ export function Game({
 			} else if (e.key === "ArrowDown") {
 				// Held: the server makes the piece fall faster instead of gravity.
 				s?.emit("softDrop", true);
+			} else if (e.key === "c" || e.key === "C" || e.key === "Shift") {
+				s?.emit("hold");
 			} else if (e.key === " ") {
 				s?.emit("hardDrop");
 			}
@@ -325,6 +344,27 @@ export function Game({
 				<button type="button" onClick={hardDrop} disabled={isDisabled}>
 					Hard Drop
 				</button>
+				<button
+					type="button"
+					onClick={hold}
+					disabled={isDisabled || !gameState.canHold}
+				>
+					Hold
+				</button>
+				<label>
+					Difficulty:{" "}
+					<select
+						value={room?.difficulty ?? "medium"}
+						onChange={(e) => changeDifficulty(e.target.value as Difficulty)}
+						disabled={room?.status !== "waiting" || room.hostId !== myId}
+					>
+						{DIFFICULTIES.map((difficulty) => (
+							<option key={difficulty} value={difficulty}>
+								{difficulty}
+							</option>
+						))}
+					</select>
+				</label>
 				{gameState.playing && <span>Timer: {timer}s</span>}
 			</div>
 
@@ -391,6 +431,14 @@ export function Game({
 				<div>
 					<div>Score: {gameState.score}</div>
 					<div>Lines: {gameState.lines}</div>
+					<h4>Hold</h4>
+					<div style={{ opacity: gameState.canHold ? 1 : 0.4 }}>
+						{gameState.hold ? (
+							<ShapePreview shape={gameState.hold.shape} />
+						) : (
+							<div>(empty)</div>
+						)}
+					</div>
 					<h4>Next</h4>
 					{gameState.next.map((piece, index) => (
 						// biome-ignore lint/suspicious/noArrayIndexKey: the queue order is the identity

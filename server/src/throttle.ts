@@ -6,7 +6,7 @@
 // enforces a minimum delay between two actions of the same type.
 // -----------------------------------------------------------------------------
 
-export type ActionType = "move" | "rotate" | "softDrop" | "hardDrop";
+export type ActionType = "move" | "rotate" | "softDrop" | "hardDrop" | "hold";
 
 /** Minimum delay (ms) between two accepted actions of the same type. */
 export const ACTION_INTERVALS_MS: Record<ActionType, number> = {
@@ -14,6 +14,7 @@ export const ACTION_INTERVALS_MS: Record<ActionType, number> = {
 	rotate: 100,
 	softDrop: 40,
 	hardDrop: 200,
+	hold: 200,
 };
 
 /** Pure check: can an action of this type be accepted at time `now`? */

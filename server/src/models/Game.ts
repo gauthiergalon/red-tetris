@@ -1,5 +1,10 @@
-import type { Direction, PieceType, RotationDirection } from "../game.ts";
-import { generateBag, penaltyFor } from "../game.ts";
+import type {
+	Difficulty,
+	Direction,
+	PieceType,
+	RotationDirection,
+} from "../game.ts";
+import { generateBag, gravityDelay, penaltyFor } from "../game.ts";
 import { type ActionType, canAct } from "../throttle.ts";
 import { Player, type PlayerState, type StepResult } from "./Player.ts";
 
@@ -11,11 +16,10 @@ export type PlayerAction =
 	| { type: "rotate"; direction?: RotationDirection }
 	| { type: "softDrop" }
 	| { type: "hardDrop" }
+	| { type: "hold" }
 	/** Soft drop held (true) or released (false): replaces gravity speed. */
 	| { type: "setSoftDrop"; active: boolean };
 
-/** Delay between two gravity steps (ms). */
-export const GRAVITY_MS = 500;
 /** Delay between two steps while soft drop is held (ms). */
 export const SOFT_DROP_MS = 50;
 
@@ -38,6 +42,7 @@ export interface RoomSnapshot {
 	hostId: string | undefined;
 	/** Seconds left before the start, only during the countdown. */
 	countdown: number | null;
+	difficulty: Difficulty;
 	players: PlayerSummary[];
 }
 
@@ -78,6 +83,8 @@ export interface GameOptions {
 export class Game {
 	readonly id: string;
 	status: GameStatus = "waiting";
+	/** Chosen by the host before the start; applies to the whole room. */
+	difficulty: Difficulty = "medium";
 	hostId: string | undefined = undefined;
 	readonly players = new Map<string, Player>();
 	readonly maxPlayers: number;
@@ -197,6 +204,15 @@ export class Game {
 		return true;
 	}
 
+	/** The host picks the difficulty, only between games. */
+	setDifficulty(requesterId: string, difficulty: Difficulty): boolean {
+		if (requesterId !== this.hostId || this.status !== "waiting") return false;
+		if (difficulty === this.difficulty) return false;
+		this.difficulty = difficulty;
+		this.#notifyRoom();
+		return true;
+	}
+
 	/** Seconds left in the countdown, rounded up (3, 2, 1, then 0). */
 	#countdownLeft(): number {
 		return Math.max(0, Math.ceil((this.#startsAt - this.#now()) / 1000));
@@ -241,12 +257,15 @@ export class Game {
 				return this.#applyMove(player, player.softDrop());
 			case "hardDrop":
 				return this.#applyStep(player, player.hardDrop());
+			case "hold":
+				return this.#applyHold(player);
 		}
 	}
 
 	/**
 	 * Gravity. Called often (every few ms); each player falls by one row when
-	 * its own delay has passed: GRAVITY_MS normally, SOFT_DROP_MS while soft
+	 * its own delay has passed: gravityDelay() (difficulty + lines cleared)
+	 * normally, SOFT_DROP_MS while soft
 	 * drop is held. Soft drop replaces gravity, it does not add to it.
 	 */
 	tick(): void {
@@ -265,7 +284,9 @@ export class Game {
 		for (const player of this.players.values()) {
 			if (!this.isPlaying) return;
 			if (!player.alive) continue;
-			const delay = player.softDropping ? SOFT_DROP_MS : GRAVITY_MS;
+			const delay = player.softDropping
+				? SOFT_DROP_MS
+				: gravityDelay(this.difficulty, player.lines);
 			if (now - player.lastFallAt < delay) continue;
 			player.lastFallAt = now;
 			this.#applyStep(player, player.tick());
@@ -278,6 +299,7 @@ export class Game {
 			status: this.status,
 			hostId: this.hostId,
 			countdown: this.status === "countdown" ? this.#countdownLeft() : null,
+			difficulty: this.difficulty,
 			players: [...this.players.values()].map((player) => ({
 				id: player.id,
 				username: player.username,
@@ -304,6 +326,17 @@ export class Game {
 		player.lastFallAt = this.#now();
 		if (active) return this.#applyStep(player, player.tick());
 		return false;
+	}
+
+	#applyHold(player: Player): boolean {
+		if (!player.hold()) return false;
+		this.#sendState(player);
+		// The swapped-in piece may have nowhere to appear: that is a game over.
+		if (!player.alive) {
+			this.#notifyRoom();
+			this.#checkEnd();
+		}
+		return true;
 	}
 
 	#applyMove(player: Player, changed: boolean): boolean {

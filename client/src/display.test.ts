@@ -23,7 +23,14 @@ function player(id: string, patch: Partial<PlayerSummary> = {}): PlayerSummary {
 }
 
 function room(status: RoomSnapshot["status"], players: PlayerSummary[]) {
-	return { id: "r", status, hostId: "a", countdown: null, players };
+	return {
+		id: "r",
+		status,
+		hostId: "a",
+		countdown: null,
+		difficulty: "medium" as const,
+		players,
+	};
 }
 
 const win = (id: string): GameResult => ({ winner: { id, username: id } });
