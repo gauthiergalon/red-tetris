@@ -14,7 +14,7 @@ const INITIAL_STATE: GameState = {
 	canHold: true,
 };
 
-export type Send = (event: string, ...args: unknown[]) => void;
+export type Send = (event: string, value?: string | boolean) => void;
 
 export function useGameConnection(roomId: string, username: string) {
 	const socketRef = useRef<Socket | null>(null);
@@ -27,25 +27,32 @@ export function useGameConnection(roomId: string, username: string) {
 	useEffect(() => {
 		const socket = io({ auth: { roomId, username } });
 		socketRef.current = socket;
-		socket.on("welcome", ({ playerId }: { playerId: string }) =>
-			setMyId(playerId),
-		);
-		socket.on("gameState", setGameState);
+		socket.on("welcome", (data: { playerId: string }) => {
+			setMyId(data.playerId);
+		});
+		socket.on("gameState", (state: GameState) => {
+			setGameState(state);
+		});
 		socket.on("room", (snapshot: RoomSnapshot) => {
 			setRoom(snapshot);
 			if (snapshot.status === "playing") setResult(null);
 		});
-		socket.on("gameEnd", setResult);
-		socket.on("connectionError", ({ message }: { message: string }) =>
-			setConnectionError(message),
-		);
+		socket.on("gameEnd", (gameResult: GameResult) => {
+			setResult(gameResult);
+		});
+		socket.on("connectionError", (error: { message: string }) => {
+			setConnectionError(error.message);
+		});
 		return () => {
 			socket.disconnect();
 		};
 	}, [roomId, username]);
 
-	const send: Send = useCallback((event, ...args) => {
-		socketRef.current?.emit(event, ...args);
+	const send: Send = useCallback((event, value) => {
+		const socket = socketRef.current;
+		if (!socket) return;
+		if (value === undefined) socket.emit(event);
+		else socket.emit(event, value);
 	}, []);
 
 	return { gameState, room, result, myId, connectionError, send };

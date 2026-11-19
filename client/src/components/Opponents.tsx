@@ -4,12 +4,10 @@ import { isEliminated, opponentTags, spectrumToRows } from "../display";
 import type { PlayerSummary, RoomSnapshot } from "../types";
 
 function spectrumColor(filled: boolean, eliminated: boolean): string {
-	if (eliminated) {
-		return filled
-			? SPECTRUM_COLORS.eliminatedFilled
-			: SPECTRUM_COLORS.eliminatedEmpty;
-	}
-	return filled ? SPECTRUM_COLORS.filled : SPECTRUM_COLORS.empty;
+	if (eliminated && filled) return SPECTRUM_COLORS.eliminatedFilled;
+	if (eliminated) return SPECTRUM_COLORS.eliminatedEmpty;
+	if (filled) return SPECTRUM_COLORS.filled;
+	return SPECTRUM_COLORS.empty;
 }
 
 function Spectrum({ player }: { player: PlayerSummary }) {

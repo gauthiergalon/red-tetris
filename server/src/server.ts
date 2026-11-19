@@ -6,7 +6,7 @@ import express, { type Request, type Response } from "express";
 import { Server } from "socket.io";
 
 import { isDifficulty, isDirection } from "./game.ts";
-import { Game, type GameListener, type PlayerAction } from "./models/Game.ts";
+import { Game, type GameListener } from "./models/Game.ts";
 
 export interface ServerOptions {
 	maxRooms?: number;
@@ -37,6 +37,10 @@ const builtClientDir = path.resolve(
 	"../../dist",
 );
 
+function hasValidLength(value: string, max: number): boolean {
+	return value.length > 0 && value.length <= max;
+}
+
 export function parseHandshake(auth: Record<string, unknown>): Handshake {
 	const { roomId, username } = auth;
 	if (typeof roomId !== "string" || typeof username !== "string") {
@@ -45,19 +49,18 @@ export function parseHandshake(auth: Record<string, unknown>): Handshake {
 
 	const room = roomId.trim();
 	const name = username.trim();
-	const validLength = (value: string, max: number) =>
-		value.length > 0 && value.length <= max;
-
 	if (
-		!validLength(room, MAX_ROOM_ID_LENGTH) ||
-		!validLength(name, MAX_USERNAME_LENGTH)
+		!hasValidLength(room, MAX_ROOM_ID_LENGTH) ||
+		!hasValidLength(name, MAX_USERNAME_LENGTH)
 	) {
 		return { ok: false, reason: "Room ID or username has an invalid length." };
 	}
 	return { ok: true, roomId: room, username: name };
 }
 
-const playerChannel = (playerId: string): string => `player:${playerId}`;
+function playerChannel(playerId: string): string {
+	return `player:${playerId}`;
+}
 
 function createRateLimiter(maxEventsPerSecond: number) {
 	const windows = new Map<string, { startedAt: number; count: number }>();
@@ -103,14 +106,19 @@ export function createRedTetrisServer(
 	const io = new Server(httpServer);
 	const games = new Map<string, Game>();
 	const rateLimiter = createRateLimiter(options.maxEventsPerSecond ?? 30);
-	const removalTimers = new Map<string, ReturnType<typeof setTimeout>>();
+	const removalTimers = new Map<string, NodeJS.Timeout>();
 
 	function broadcastTo(roomId: string): GameListener {
 		return {
-			playerState: (playerId, state) =>
-				io.to(playerChannel(playerId)).emit("gameState", state),
-			roomUpdate: (snapshot) => io.to(roomId).emit("room", snapshot),
-			gameEnd: (result) => io.to(roomId).emit("gameEnd", result),
+			playerState(playerId, state) {
+				io.to(playerChannel(playerId)).emit("gameState", state);
+			},
+			roomUpdate(snapshot) {
+				io.to(roomId).emit("room", snapshot);
+			},
+			gameEnd(result) {
+				io.to(roomId).emit("gameEnd", result);
+			},
 		};
 	}
 
@@ -128,14 +136,12 @@ export function createRedTetrisServer(
 	}
 
 	function scheduleRemoval(game: Game, playerId: string): void {
-		removalTimers.set(
-			playerId,
-			setTimeout(() => {
-				removalTimers.delete(playerId);
-				game.leave(playerId);
-				if (game.isEmpty) games.delete(game.id);
-			}, graceMs),
-		);
+		const timer = setTimeout(() => {
+			removalTimers.delete(playerId);
+			game.leave(playerId);
+			if (game.isEmpty) games.delete(game.id);
+		}, graceMs);
+		removalTimers.set(playerId, timer);
 	}
 
 	function cancelRemoval(playerId: string): void {
@@ -144,22 +150,29 @@ export function createRedTetrisServer(
 	}
 
 	io.on("connection", (socket) => {
-		const reject = (reason: string): void => {
+		function reject(reason: string): void {
 			socket.emit("connectionError", { message: reason });
 			socket.disconnect(true);
-		};
+		}
 
 		const handshake = parseHandshake(socket.handshake.auth);
-		if (!handshake.ok) return reject(handshake.reason);
+		if (!handshake.ok) {
+			reject(handshake.reason);
+			return;
+		}
 
 		const game = findOrCreateGame(handshake.roomId);
-		if (!game) return reject("Maximum number of rooms reached.");
+		if (!game) {
+			reject("Maximum number of rooms reached.");
+			return;
+		}
 
 		socket.join(game.id);
 		const joined = game.join(randomUUID(), handshake.username);
 		if (!joined.ok) {
 			if (game.isEmpty) games.delete(game.id);
-			return reject(joined.reason);
+			reject(joined.reason);
+			return;
 		}
 
 		const { player } = joined;
@@ -169,53 +182,50 @@ export function createRedTetrisServer(
 		socket.emit("gameState", player.toState(game.isPlaying));
 		socket.emit("room", game.snapshot());
 
-		const whenAllowed =
-			<Args extends unknown[]>(handler: (...args: Args) => void) =>
-			(...args: Args) => {
-				if (rateLimiter.allow(socket.id)) handler(...args);
-			};
-		const act = (action: PlayerAction) => game.handleAction(player.id, action);
+		socket.on("start", () => {
+			if (!rateLimiter.allow(socket.id)) return;
+			game.start(player.id);
+		});
 
-		socket.on(
-			"start",
-			whenAllowed(() => game.start(player.id)),
-		);
-		socket.on(
-			"difficulty",
-			whenAllowed((difficulty: unknown) => {
-				if (isDifficulty(difficulty)) game.setDifficulty(player.id, difficulty);
-			}),
-		);
-		socket.on(
-			"move",
-			whenAllowed((direction: unknown) => {
-				if (isDirection(direction)) act({ type: "move", direction });
-			}),
-		);
-		socket.on(
-			"rotate",
-			whenAllowed((direction: unknown) =>
-				act({ type: "rotate", direction: direction === "ccw" ? "ccw" : "cw" }),
-			),
-		);
-		socket.on(
-			"softDrop",
-			whenAllowed((held: unknown) =>
-				act(
-					typeof held === "boolean"
-						? { type: "setSoftDrop", active: held }
-						: { type: "softDrop" },
-				),
-			),
-		);
-		socket.on(
-			"hardDrop",
-			whenAllowed(() => act({ type: "hardDrop" })),
-		);
-		socket.on(
-			"hold",
-			whenAllowed(() => act({ type: "hold" })),
-		);
+		socket.on("difficulty", (difficulty: unknown) => {
+			if (!rateLimiter.allow(socket.id)) return;
+			if (isDifficulty(difficulty)) game.setDifficulty(player.id, difficulty);
+		});
+
+		socket.on("move", (direction: unknown) => {
+			if (!rateLimiter.allow(socket.id)) return;
+			if (isDirection(direction)) {
+				game.handleAction(player.id, { type: "move", direction });
+			}
+		});
+
+		socket.on("rotate", (direction: unknown) => {
+			if (!rateLimiter.allow(socket.id)) return;
+			if (direction === "ccw") {
+				game.handleAction(player.id, { type: "rotate", direction: "ccw" });
+			} else {
+				game.handleAction(player.id, { type: "rotate", direction: "cw" });
+			}
+		});
+
+		socket.on("softDrop", (held: unknown) => {
+			if (!rateLimiter.allow(socket.id)) return;
+			if (typeof held === "boolean") {
+				game.handleAction(player.id, { type: "setSoftDrop", active: held });
+			} else {
+				game.handleAction(player.id, { type: "softDrop" });
+			}
+		});
+
+		socket.on("hardDrop", () => {
+			if (!rateLimiter.allow(socket.id)) return;
+			game.handleAction(player.id, { type: "hardDrop" });
+		});
+
+		socket.on("hold", () => {
+			if (!rateLimiter.allow(socket.id)) return;
+			game.handleAction(player.id, { type: "hold" });
+		});
 
 		socket.on("disconnect", () => {
 			rateLimiter.forget(socket.id);
@@ -232,7 +242,7 @@ export function createRedTetrisServer(
 		clearInterval(tickInterval);
 		for (const timer of removalTimers.values()) clearTimeout(timer);
 		removalTimers.clear();
-		await new Promise<void>((resolve) => io.close(() => resolve()));
+		await io.close();
 	}
 
 	return { httpServer, io, games, close };

@@ -102,9 +102,7 @@ export class Game {
 	}
 
 	join(id: string, username: string): JoinResult {
-		const existing = [...this.players.values()].find(
-			(player) => player.username === username,
-		);
+		const existing = this.#findByUsername(username);
 		if (existing?.connected) {
 			return { ok: false, reason: "This username is already taken here." };
 		}
@@ -115,7 +113,7 @@ export class Game {
 
 		const player = new Player(id, username, (index) => this.pieceAt(index));
 		this.players.set(id, player);
-		this.hostId ??= id;
+		if (this.hostId === undefined) this.hostId = id;
 		this.#sendState(player);
 		this.#notifyRoom();
 		return { ok: true, player, resumed: false };
@@ -131,7 +129,7 @@ export class Game {
 
 	leave(id: string): void {
 		if (!this.players.delete(id)) return;
-		if (this.hostId === id) this.hostId = this.players.keys().next().value;
+		if (this.hostId === id) this.hostId = this.#firstPlayerId();
 
 		if (this.isEmpty) {
 			this.status = "waiting";
@@ -195,14 +193,12 @@ export class Game {
 	}
 
 	snapshot(): RoomSnapshot {
-		return {
-			id: this.id,
-			status: this.status,
-			hostId: this.hostId,
-			countdown:
-				this.status === "countdown" ? this.#secondsBeforeStart() : null,
-			difficulty: this.difficulty,
-			players: [...this.players.values()].map((player) => ({
+		let countdown: number | null = null;
+		if (this.status === "countdown") countdown = this.#secondsBeforeStart();
+
+		const players: PlayerSummary[] = [];
+		for (const player of this.players.values()) {
+			players.push({
 				id: player.id,
 				username: player.username,
 				alive: player.alive,
@@ -210,8 +206,29 @@ export class Game {
 				connected: player.connected,
 				score: player.score,
 				spectrum: player.spectrum,
-			})),
+			});
+		}
+
+		return {
+			id: this.id,
+			status: this.status,
+			hostId: this.hostId,
+			countdown: countdown,
+			difficulty: this.difficulty,
+			players: players,
 		};
+	}
+
+	#findByUsername(username: string): Player | undefined {
+		for (const player of this.players.values()) {
+			if (player.username === username) return player;
+		}
+		return undefined;
+	}
+
+	#firstPlayerId(): string | undefined {
+		const ids = Array.from(this.players.keys());
+		return ids[0];
 	}
 
 	#canConfigure(requesterId: string): boolean {
@@ -266,16 +283,16 @@ export class Game {
 	}
 
 	#fallDelay(player: Player): number {
-		return player.softDropping
-			? SOFT_DROP_MS
-			: gravityDelay(this.difficulty, player.lines);
+		if (player.softDropping) return SOFT_DROP_MS;
+		return gravityDelay(this.difficulty, player.lines);
 	}
 
 	#setSoftDrop(player: Player, active: boolean): boolean {
 		if (player.softDropping === active) return false;
 		player.softDropping = active;
 		player.lastFallAt = this.#now();
-		return active && this.#reportStep(player, player.tick());
+		if (!active) return false;
+		return this.#reportStep(player, player.tick());
 	}
 
 	#hold(player: Player): boolean {
@@ -316,17 +333,22 @@ export class Game {
 	#endIfOver(): void {
 		if (!this.isPlaying) return;
 
-		const alive = [...this.players.values()].filter((p) => p.alive);
-		const over = this.#multiplayer ? alive.length <= 1 : alive.length === 0;
-		if (!over) return;
+		const alive: Player[] = [];
+		for (const player of this.players.values()) {
+			if (player.alive) alive.push(player);
+		}
+
+		if (this.#multiplayer && alive.length > 1) return;
+		if (!this.#multiplayer && alive.length > 0) return;
 
 		this.status = "waiting";
 		for (const player of this.players.values()) this.#sendState(player);
 
-		const winner = this.#multiplayer ? alive[0] : undefined;
-		this.#listener.gameEnd({
-			winner: winner ? { id: winner.id, username: winner.username } : null,
-		});
+		let result: GameResult = { winner: null };
+		if (this.#multiplayer && alive.length === 1) {
+			result = { winner: { id: alive[0].id, username: alive[0].username } };
+		}
+		this.#listener.gameEnd(result);
 		this.#notifyRoom();
 	}
 

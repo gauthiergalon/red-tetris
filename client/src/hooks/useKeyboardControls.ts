@@ -12,57 +12,91 @@ export function useKeyboardControls(send: Send, canPlay: boolean) {
 	canPlayRef.current = canPlay;
 
 	useEffect(() => {
-		const repeaters = new Map<Side, ReturnType<typeof setTimeout>>();
+		const repeaters = new Map<Side, number>();
 
-		const stopMoving = (side: Side) => {
-			clearTimeout(repeaters.get(side));
+		function stopMoving(side: Side) {
+			window.clearTimeout(repeaters.get(side));
 			repeaters.delete(side);
-		};
+		}
 
-		const startMoving = (side: Side) => {
-			stopMoving(side === "left" ? "right" : "left");
+		function repeatMove(side: Side) {
 			send("move", side);
-			const repeat = () => {
-				send("move", side);
-				repeaters.set(side, setTimeout(repeat, AUTO_REPEAT_INTERVAL_MS));
-			};
-			repeaters.set(side, setTimeout(repeat, AUTO_REPEAT_DELAY_MS));
-		};
+			const timer = window.setTimeout(
+				() => repeatMove(side),
+				AUTO_REPEAT_INTERVAL_MS,
+			);
+			repeaters.set(side, timer);
+		}
 
-		const releaseEverything = () => {
+		function startMoving(side: Side) {
+			if (side === "left") stopMoving("right");
+			else stopMoving("left");
+			send("move", side);
+			const timer = window.setTimeout(
+				() => repeatMove(side),
+				AUTO_REPEAT_DELAY_MS,
+			);
+			repeaters.set(side, timer);
+		}
+
+		function releaseEverything() {
 			stopMoving("left");
 			stopMoving("right");
 			send("softDrop", false);
-		};
+		}
 
-		const onPress: Record<Command, () => void> = {
-			rotateClockwise: () => send("rotate", "cw"),
-			rotateCounterClockwise: () => send("rotate", "ccw"),
-			left: () => startMoving("left"),
-			right: () => startMoving("right"),
-			softDrop: () => send("softDrop", true),
-			hardDrop: () => send("hardDrop"),
-			hold: () => send("hold"),
-		};
+		function press(command: Command) {
+			switch (command) {
+				case "rotateClockwise":
+					send("rotate", "cw");
+					break;
+				case "rotateCounterClockwise":
+					send("rotate", "ccw");
+					break;
+				case "left":
+					startMoving("left");
+					break;
+				case "right":
+					startMoving("right");
+					break;
+				case "softDrop":
+					send("softDrop", true);
+					break;
+				case "hardDrop":
+					send("hardDrop");
+					break;
+				case "hold":
+					send("hold");
+					break;
+			}
+		}
 
-		const onRelease: Partial<Record<Command, () => void>> = {
-			left: () => stopMoving("left"),
-			right: () => stopMoving("right"),
-			softDrop: () => send("softDrop", false),
-		};
+		function release(command: Command) {
+			switch (command) {
+				case "left":
+					stopMoving("left");
+					break;
+				case "right":
+					stopMoving("right");
+					break;
+				case "softDrop":
+					send("softDrop", false);
+					break;
+			}
+		}
 
-		const onKeyDown = (event: KeyboardEvent) => {
+		function onKeyDown(event: KeyboardEvent) {
 			if (!canPlayRef.current) return;
 			if (scrollsThePage(event.key)) event.preventDefault();
 			if (event.repeat) return;
 			const command = commandForKey(event.key);
-			if (command) onPress[command]();
-		};
+			if (command) press(command);
+		}
 
-		const onKeyUp = (event: KeyboardEvent) => {
+		function onKeyUp(event: KeyboardEvent) {
 			const command = commandForKey(event.key);
-			if (command) onRelease[command]?.();
-		};
+			if (command) release(command);
+		}
 
 		window.addEventListener("keydown", onKeyDown);
 		window.addEventListener("keyup", onKeyUp);

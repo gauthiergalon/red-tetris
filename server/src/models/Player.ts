@@ -19,7 +19,7 @@ import {
 	toVisiblePosition,
 	visibleRows,
 } from "../game.ts";
-import type { ActionType } from "../throttle.ts";
+import type { LastActionTimes } from "../throttle.ts";
 import { Piece } from "./Piece.ts";
 
 export type PieceSource = (index: number) => PieceType;
@@ -74,7 +74,7 @@ export class Player {
 
 	softDropping = false;
 	lastFallAt = 0;
-	lastActionAt: Partial<Record<ActionType, number>> = {};
+	lastActionAt: LastActionTimes = {};
 
 	constructor(id: string, username: string, pieceSource: PieceSource) {
 		this.id = id;
@@ -101,33 +101,56 @@ export class Player {
 	}
 
 	toState(gamePlaying: boolean): PlayerState {
+		let piece: PieceData | undefined;
+		if (this.piece) {
+			piece = {
+				type: this.piece.type,
+				shape: this.piece.shape,
+				rotationState: this.piece.rotationState,
+				pos: toVisiblePosition(this.piece.pos),
+			};
+		}
+
+		let next: PiecePreview[] = [];
+		if (this.inGame) next = this.nextPieces();
+
+		let hold: PiecePreview | null = null;
+		if (this.held) hold = preview(this.held);
+
 		return {
 			grid: visibleRows(this.grid),
-			piece: this.piece && {
-				...this.piece,
-				pos: toVisiblePosition(this.piece.pos),
-			},
+			piece: piece,
 			playing: gamePlaying && this.alive,
 			score: this.score,
 			lines: this.lines,
-			next: this.inGame ? this.nextPieces() : [],
-			hold: this.held ? preview(this.held) : null,
+			next: next,
+			hold: hold,
 			canHold: this.canHold,
 		};
 	}
 
 	nextPieces(count = NEXT_QUEUE_SIZE): PiecePreview[] {
-		return Array.from({ length: count }, (_, i) =>
-			preview(this.#pieceSource(this.sequenceIndex + i)),
-		);
+		const pieces: PiecePreview[] = [];
+		for (let i = 0; i < count; i++) {
+			pieces.push(preview(this.#pieceSource(this.sequenceIndex + i)));
+		}
+		return pieces;
 	}
 
 	move(direction: Direction): boolean {
-		return this.#replacePiece(this.#activePiece?.moved(this.grid, direction));
+		if (!this.alive || !this.piece) return false;
+		const next = this.piece.moved(this.grid, direction);
+		if (!next) return false;
+		this.piece = next;
+		return true;
 	}
 
 	rotate(direction: RotationDirection = "cw"): boolean {
-		return this.#replacePiece(this.#activePiece?.rotated(this.grid, direction));
+		if (!this.alive || !this.piece) return false;
+		const next = this.piece.rotated(this.grid, direction);
+		if (!next) return false;
+		this.piece = next;
+		return true;
 	}
 
 	softDrop(): boolean {
@@ -137,24 +160,24 @@ export class Player {
 	}
 
 	tick(): StepResult {
-		const piece = this.#activePiece;
-		if (!piece) return UNCHANGED;
+		if (!this.alive || !this.piece) return UNCHANGED;
+		const piece = this.piece;
 		if (!this.move("down")) return this.#lock(piece);
 		if (this.softDropping) this.score += SOFT_DROP_POINTS;
 		return MOVED;
 	}
 
 	hardDrop(): StepResult {
-		const piece = this.#activePiece;
-		if (!piece) return UNCHANGED;
+		if (!this.alive || !this.piece) return UNCHANGED;
+		const piece = this.piece;
 		const dropped = piece.dropped(this.grid);
 		this.score += HARD_DROP_POINTS * (dropped.pos.y - piece.pos.y);
 		return this.#lock(dropped);
 	}
 
 	hold(): boolean {
-		const piece = this.#activePiece;
-		if (!piece || !this.canHold) return false;
+		if (!this.alive || !this.piece || !this.canHold) return false;
+		const piece = this.piece;
 
 		if (this.held) this.#place(Piece.spawn(this.held));
 		else this.#spawnNextPiece();
@@ -177,16 +200,6 @@ export class Player {
 			if (lifted) this.piece = lifted;
 			else this.alive = false;
 		}
-		return true;
-	}
-
-	get #activePiece(): Piece | undefined {
-		return this.alive ? this.piece : undefined;
-	}
-
-	#replacePiece(next: Piece | null | undefined): boolean {
-		if (!next) return false;
-		this.piece = next;
 		return true;
 	}
 

@@ -29,7 +29,7 @@ export function spawnPosition(type: PieceType): Position {
 
 export type RotationDirection = "cw" | "ccw";
 
-type Kick = readonly [x: number, yPointingUp: number];
+type Kick = [number, number];
 
 const JLSTZ_CLOCKWISE_KICKS: Kick[][] = [
 	[
@@ -93,12 +93,9 @@ const I_CLOCKWISE_KICKS: Kick[][] = [
 	],
 ];
 
-function toBoardOffset([x, yPointingUp]: Kick): Position {
-	return { x: x || 0, y: -yPointingUp || 0 };
-}
-
-function opposite([x, y]: Kick): Kick {
-	return [-x, -y];
+function negate(value: number): number {
+	if (value === 0) return 0;
+	return -value;
 }
 
 export function kicksFor(
@@ -106,23 +103,30 @@ export function kicksFor(
 	fromState: number,
 	direction: RotationDirection,
 ): Position[] {
-	const clockwiseKicks =
-		type === "I" ? I_CLOCKWISE_KICKS : JLSTZ_CLOCKWISE_KICKS;
-	if (direction === "cw") return clockwiseKicks[fromState].map(toBoardOffset);
+	let table = JLSTZ_CLOCKWISE_KICKS;
+	if (type === "I") table = I_CLOCKWISE_KICKS;
 
-	const previousState = (fromState + 3) % 4;
-	return clockwiseKicks[previousState].map((kick) =>
-		toBoardOffset(opposite(kick)),
-	);
+	const offsets: Position[] = [];
+	if (direction === "cw") {
+		for (const [x, yUp] of table[fromState]) {
+			offsets.push({ x: x, y: negate(yUp) });
+		}
+	} else {
+		const previousState = (fromState + 3) % 4;
+		for (const [x, yUp] of table[previousState]) {
+			offsets.push({ x: negate(x), y: yUp });
+		}
+	}
+	return offsets;
 }
 
-export const DIRECTIONS = {
+export type Direction = "left" | "right" | "down";
+
+export const DIRECTIONS: Record<Direction, Position> = {
 	left: { x: -1, y: 0 },
 	right: { x: 1, y: 0 },
 	down: { x: 0, y: 1 },
-} as const;
-
-export type Direction = keyof typeof DIRECTIONS;
+};
 
 export const PIECE_TYPES: readonly PieceType[] = [
 	"I",
@@ -177,7 +181,11 @@ export function createEmptyRow(fill: string = EMPTY_CELL): string[] {
 }
 
 export function createEmptyGrid(): Grid {
-	return Array.from({ length: GRID_ROWS }, () => createEmptyRow());
+	const grid: Grid = [];
+	for (let y = 0; y < GRID_ROWS; y++) {
+		grid.push(createEmptyRow());
+	}
+	return grid;
 }
 
 export interface Cell extends Position {
@@ -185,13 +193,16 @@ export interface Cell extends Position {
 }
 
 export function pieceCells(piece: PieceData): Cell[] {
-	return piece.shape.flatMap((row, dy) =>
-		row.flatMap((value, dx) =>
-			value === EMPTY_CELL
-				? []
-				: [{ x: piece.pos.x + dx, y: piece.pos.y + dy, value }],
-		),
-	);
+	const cells: Cell[] = [];
+	for (let dy = 0; dy < piece.shape.length; dy++) {
+		for (let dx = 0; dx < piece.shape[dy].length; dx++) {
+			const value = piece.shape[dy][dx];
+			if (value !== EMPTY_CELL) {
+				cells.push({ x: piece.pos.x + dx, y: piece.pos.y + dy, value });
+			}
+		}
+	}
+	return cells;
 }
 
 function isInsideBoard({ x, y }: Position): boolean {
@@ -223,11 +234,20 @@ function isClearable(row: string[]): boolean {
 }
 
 export function clearLines(grid: Grid): { grid: Grid; cleared: number } {
-	const keptRows = grid.filter((row) => !isClearable(row));
+	const keptRows: Grid = [];
+	for (const row of grid) {
+		if (!isClearable(row)) keptRows.push([...row]);
+	}
 	const cleared = grid.length - keptRows.length;
-	const newRows = Array.from({ length: cleared }, () => createEmptyRow());
 
-	return { grid: [...newRows, ...keptRows.map((row) => [...row])], cleared };
+	const newGrid: Grid = [];
+	for (let i = 0; i < cleared; i++) {
+		newGrid.push(createEmptyRow());
+	}
+	for (const row of keptRows) {
+		newGrid.push(row);
+	}
+	return { grid: newGrid, cleared: cleared };
 }
 
 export function addPenaltyLines(
@@ -235,18 +255,20 @@ export function addPenaltyLines(
 	count: number,
 ): { grid: Grid; overflow: boolean } {
 	const added = Math.max(0, Math.min(count, grid.length));
-	const pushedOutRows = grid.slice(0, added);
-	const overflow = pushedOutRows.some((row) =>
-		row.some((cell) => cell !== EMPTY_CELL),
-	);
-	const penaltyRows = Array.from({ length: added }, () =>
-		createEmptyRow(PENALTY_CELL),
-	);
 
-	return {
-		grid: [...grid.slice(added).map((row) => [...row]), ...penaltyRows],
-		overflow,
-	};
+	let overflow = false;
+	for (let y = 0; y < added; y++) {
+		if (grid[y].some((cell) => cell !== EMPTY_CELL)) overflow = true;
+	}
+
+	const newGrid: Grid = [];
+	for (let y = added; y < grid.length; y++) {
+		newGrid.push([...grid[y]]);
+	}
+	for (let i = 0; i < added; i++) {
+		newGrid.push(createEmptyRow(PENALTY_CELL));
+	}
+	return { grid: newGrid, overflow: overflow };
 }
 
 export type Difficulty = "easy" | "medium" | "hard";
@@ -266,9 +288,7 @@ export const LEVEL_SPEEDUP = 0.8;
 export const MIN_GRAVITY_MS = 50;
 
 export function isDifficulty(value: unknown): value is Difficulty {
-	return (
-		typeof value === "string" && DIFFICULTIES.includes(value as Difficulty)
-	);
+	return value === "easy" || value === "medium" || value === "hard";
 }
 
 export function gravityDelay(difficulty: Difficulty, lines: number): number {
@@ -291,12 +311,18 @@ export function penaltyFor(cleared: number): number {
 }
 
 function columnHeight(grid: Grid, x: number): number {
-	const highestBlock = grid.findIndex((row) => row[x] !== EMPTY_CELL);
-	return highestBlock === -1 ? 0 : grid.length - highestBlock;
+	for (let y = 0; y < grid.length; y++) {
+		if (grid[y][x] !== EMPTY_CELL) return grid.length - y;
+	}
+	return 0;
 }
 
 export function computeSpectrum(grid: Grid): number[] {
-	return grid[0].map((_, x) => columnHeight(grid, x));
+	const heights: number[] = [];
+	for (let x = 0; x < grid[0].length; x++) {
+		heights.push(columnHeight(grid, x));
+	}
+	return heights;
 }
 
 export function getShape(type: PieceType): string[][] {
@@ -305,20 +331,34 @@ export function getShape(type: PieceType): string[][] {
 
 export function rotateShape(shape: string[][]): string[][] {
 	const rows = shape.length;
-	return shape[0].map((_, x) =>
-		Array.from({ length: rows }, (_, k) => shape[rows - 1 - k][x]),
-	);
+	const cols = shape[0].length;
+	const rotated: string[][] = [];
+	for (let x = 0; x < cols; x++) {
+		const newRow: string[] = [];
+		for (let y = rows - 1; y >= 0; y--) {
+			newRow.push(shape[y][x]);
+		}
+		rotated.push(newRow);
+	}
+	return rotated;
 }
 
 export function rotateShapeCounterClockwise(shape: string[][]): string[][] {
+	const rows = shape.length;
 	const cols = shape[0].length;
-	return Array.from({ length: cols }, (_, y) =>
-		shape.map((row) => row[cols - 1 - y]),
-	);
+	const rotated: string[][] = [];
+	for (let x = cols - 1; x >= 0; x--) {
+		const newRow: string[] = [];
+		for (let y = 0; y < rows; y++) {
+			newRow.push(shape[y][x]);
+		}
+		rotated.push(newRow);
+	}
+	return rotated;
 }
 
 export function isDirection(value: unknown): value is Direction {
-	return typeof value === "string" && Object.hasOwn(DIRECTIONS, value);
+	return value === "left" || value === "right" || value === "down";
 }
 
 export function isColliding(grid: Grid, piece: PieceData): boolean {
@@ -335,25 +375,34 @@ export function offsetPosition(
 	return { x: pos.x + dx, y: pos.y + dy };
 }
 
+export interface Rotation {
+	shape: string[][];
+	pos: Position;
+	rotationState: number;
+}
+
 export function rotateWithKicks(
 	grid: Grid,
 	piece: PieceData,
 	direction: RotationDirection = "cw",
-): Pick<PieceData, "shape" | "pos" | "rotationState"> | null {
+): Rotation | null {
 	if (piece.type === "O") return null;
 
-	const shape =
-		direction === "cw"
-			? rotateShape(piece.shape)
-			: rotateShapeCounterClockwise(piece.shape);
-	const rotationState =
-		(piece.rotationState + (direction === "cw" ? 1 : 3)) % 4;
+	let shape: string[][];
+	let rotationState: number;
+	if (direction === "cw") {
+		shape = rotateShape(piece.shape);
+		rotationState = (piece.rotationState + 1) % 4;
+	} else {
+		shape = rotateShapeCounterClockwise(piece.shape);
+		rotationState = (piece.rotationState + 3) % 4;
+	}
 
 	for (const offset of kicksFor(piece.type, piece.rotationState, direction)) {
 		const candidate: PieceData = {
-			...piece,
-			shape,
-			rotationState,
+			type: piece.type,
+			shape: shape,
+			rotationState: rotationState,
 			pos: offsetPosition(piece.pos, offset.x, offset.y),
 		};
 		if (!isColliding(grid, candidate)) {
@@ -366,17 +415,26 @@ export function rotateWithKicks(
 
 export function dropPosition(grid: Grid, piece: PieceData): Position {
 	let pos = piece.pos;
-	while (!isColliding(grid, { ...piece, pos: offsetPosition(pos, 0, 1) })) {
-		pos = offsetPosition(pos, 0, 1);
+	while (true) {
+		const below = offsetPosition(pos, 0, 1);
+		const candidate: PieceData = {
+			type: piece.type,
+			shape: piece.shape,
+			rotationState: piece.rotationState,
+			pos: below,
+		};
+		if (isColliding(grid, candidate)) return pos;
+		pos = below;
 	}
-	return pos;
 }
 
 export function generateBag(random: () => number = Math.random): PieceType[] {
 	const bag = [...PIECE_TYPES];
 	for (let i = bag.length - 1; i > 0; i--) {
 		const j = Math.floor(random() * (i + 1));
-		[bag[i], bag[j]] = [bag[j], bag[i]];
+		const temp = bag[i];
+		bag[i] = bag[j];
+		bag[j] = temp;
 	}
 	return bag;
 }

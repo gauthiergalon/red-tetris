@@ -1,6 +1,12 @@
 import type { Send } from "../hooks/useGameConnection";
 import { DIFFICULTIES, type Difficulty } from "../types";
 
+interface ToolbarAction {
+	label: string;
+	event: string;
+	value?: string;
+}
+
 interface ToolbarProps {
 	send: Send;
 	canConfigure: boolean;
@@ -18,13 +24,13 @@ export function Toolbar({
 	difficulty,
 	elapsedSeconds,
 }: ToolbarProps) {
-	const actions: [label: string, event: string, ...args: unknown[]][] = [
-		["Rotate ↺", "rotate", "ccw"],
-		["Rotate ↻", "rotate", "cw"],
-		["←", "move", "left"],
-		["→", "move", "right"],
-		["↓", "softDrop"],
-		["Hard Drop", "hardDrop"],
+	const actions: ToolbarAction[] = [
+		{ label: "Rotate ↺", event: "rotate", value: "ccw" },
+		{ label: "Rotate ↻", event: "rotate", value: "cw" },
+		{ label: "←", event: "move", value: "left" },
+		{ label: "→", event: "move", value: "right" },
+		{ label: "↓", event: "softDrop" },
+		{ label: "Hard Drop", event: "hardDrop" },
 	];
 
 	return (
@@ -43,14 +49,14 @@ export function Toolbar({
 			>
 				Start Game
 			</button>
-			{actions.map(([label, event, ...args]) => (
+			{actions.map((action) => (
 				<button
-					key={label}
+					key={action.label}
 					type="button"
-					onClick={() => send(event, ...args)}
+					onClick={() => send(action.event, action.value)}
 					disabled={!canPlay}
 				>
-					{label}
+					{action.label}
 				</button>
 			))}
 			<button

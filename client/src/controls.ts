@@ -7,20 +7,20 @@ export type Command =
 	| "hardDrop"
 	| "hold";
 
-const KEY_COMMANDS: Record<string, Command> = {
-	ArrowUp: "rotateClockwise",
-	x: "rotateClockwise",
-	X: "rotateClockwise",
-	z: "rotateCounterClockwise",
-	Z: "rotateCounterClockwise",
-	ArrowLeft: "left",
-	ArrowRight: "right",
-	ArrowDown: "softDrop",
-	" ": "hardDrop",
-	c: "hold",
-	C: "hold",
-	Shift: "hold",
-};
+const KEY_COMMANDS = new Map<string, Command>([
+	["ArrowUp", "rotateClockwise"],
+	["x", "rotateClockwise"],
+	["X", "rotateClockwise"],
+	["z", "rotateCounterClockwise"],
+	["Z", "rotateCounterClockwise"],
+	["ArrowLeft", "left"],
+	["ArrowRight", "right"],
+	["ArrowDown", "softDrop"],
+	[" ", "hardDrop"],
+	["c", "hold"],
+	["C", "hold"],
+	["Shift", "hold"],
+]);
 
 const SCROLLING_KEYS = new Set([
 	"ArrowUp",
@@ -31,7 +31,7 @@ const SCROLLING_KEYS = new Set([
 ]);
 
 export function commandForKey(key: string): Command | undefined {
-	return Object.hasOwn(KEY_COMMANDS, key) ? KEY_COMMANDS[key] : undefined;
+	return KEY_COMMANDS.get(key);
 }
 
 export function scrollsThePage(key: string): boolean {
