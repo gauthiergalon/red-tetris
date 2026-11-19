@@ -29,9 +29,9 @@ export function spawnPosition(type: PieceType): Position {
 
 export type RotationDirection = "cw" | "ccw";
 
-type GuidelineKick = readonly [x: number, yPointingUp: number];
+type Kick = readonly [x: number, yPointingUp: number];
 
-const JLSTZ_CLOCKWISE_KICKS: GuidelineKick[][] = [
+const JLSTZ_CLOCKWISE_KICKS: Kick[][] = [
 	[
 		[0, 0],
 		[-1, 0],
@@ -62,7 +62,7 @@ const JLSTZ_CLOCKWISE_KICKS: GuidelineKick[][] = [
 	],
 ];
 
-const I_CLOCKWISE_KICKS: GuidelineKick[][] = [
+const I_CLOCKWISE_KICKS: Kick[][] = [
 	[
 		[0, 0],
 		[-2, 0],
@@ -93,11 +93,11 @@ const I_CLOCKWISE_KICKS: GuidelineKick[][] = [
 	],
 ];
 
-function toBoardOffset([x, yPointingUp]: GuidelineKick): Position {
+function toBoardOffset([x, yPointingUp]: Kick): Position {
 	return { x: x || 0, y: -yPointingUp || 0 };
 }
 
-function opposite([x, y]: GuidelineKick): GuidelineKick {
+function opposite([x, y]: Kick): Kick {
 	return [-x, -y];
 }
 
