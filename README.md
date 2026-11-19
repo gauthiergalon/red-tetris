@@ -12,20 +12,31 @@ where applicable.
 ## Features
 
 - Room-based multiplayer with a generated player ID and username
-- 10-column by 20-row Tetris board
-- Seven tetromino types with shared seven-bag piece generation
-- Clockwise and counter-clockwise rotation with Tetris guideline-style kick tables
-- Ghost piece, next-piece queue, hold piece, soft drop, and hard drop
-- Easy, medium, and hard starting speeds
-- 20% gravity speedup for every 10 lines cleared
-- Host-only game start and difficulty selection
-- Three-second countdown before a match
-- Multiplayer line penalties and opponent spectra
-- Reconnection grace period for the same username
-- In-room waiting between games
+- A 10-column by 20-visible-row board with two hidden spawn rows
+- Seven tetromino types dealt from a shared seven-bag sequence
+- Ghost piece, three-piece preview queue, hold, soft drop, and hard drop
+- Host-only game start and difficulty selection, with a three-second countdown
+- Multiplayer garbage-line attacks and opponent board spectra
+- Reconnection grace period for the same username and in-room waiting between
+  games
 - Victory and elimination results
 - Keyboard controls and an on-screen control toolbar
 - Unit tests for server state, client rendering, controls, and gameplay utilities
+
+## Bonus
+
+- **SRS-style rotation:** wall kicks allow pieces to rotate near walls and
+  stacked blocks, with separate kick tables for I pieces and JLSTZ pieces.
+- **Counter-clockwise rotation:** rotate counter-clockwise with **Z** or the
+  **Rotate ↺** toolbar button.
+- **Scoring:** clear 1 / 2 / 3 / 4 lines for 100 / 300 / 500 / 800 points.
+  Soft drop adds 1 point per row and hard drop adds 2 points per row.
+- **Configurable difficulty:** the host can choose easy, medium, or hard before
+  starting a match. Starting gravity is 800 / 500 / 250 ms, respectively.
+- **Hold:** store or swap the active piece once per piece; holding becomes
+  available again after the next piece locks.
+- **DAS (Delayed Auto Shift):** hold left or right to move immediately, then
+  auto-repeat after 170 ms at 60 ms intervals.
 
 ## Tech stack
 
@@ -60,7 +71,7 @@ red-tetris/
 │       ├── components/
 │       │   ├── Board.tsx       # 10x20 active board renderer
 │       │   ├── Opponents.tsx   # Opponent spectra and player tags
-│       │   ├── PiecePreview.tsx  # Hold and next-piece preview
+│       │   ├── PiecePreview.tsx # Hold and next-piece preview
 │       │   ├── SidePanel.tsx   # Score, lines, hold, and next queue
 │       │   └── Toolbar.tsx     # Start, difficulty, and touch/button controls
 │       └── hooks/
@@ -112,9 +123,9 @@ Socket.IO connection and translates server events into React state. It provides:
 - `send` - a typed wrapper for emitting Socket.IO events
 
 The [useKeyboardControls](client/src/hooks/useKeyboardControls.ts) hook maps
-browser keys to commands, handles left/right auto-repeat, and releases soft drop
-when keys are released or the window loses focus. The toolbar provides equivalent
-button controls.
+browser keys to commands, handles delayed left/right auto-repeat, and releases
+soft drop when keys are released or the window loses focus. The toolbar provides
+equivalent button controls.
 
 ### Server
 
@@ -147,18 +158,19 @@ Pure board and tetromino rules live in [server/src/game.ts](server/src/game.ts).
 
 ### Board and piece rules
 
-- Board dimensions are 10 columns and 20 rows.
+- The visible board is 10 columns by 20 rows. The server keeps two additional
+  hidden rows above it so pieces can spawn before entering view.
+- A piece that locks entirely within the hidden rows is a lock-out.
 - Locked cells store the tetromino letter.
 - The penalty cell is `X` and cannot be cleared by a normal complete line.
 - One, two, three, or four cleared lines score 100, 300, 500, or 800 points.
 - Soft drop adds 1 point per moved row.
 - Hard drop adds 2 points per dropped row.
 - Clearing `n` lines sends `n - 1` indestructible rows to each opponent.
-- Medium gravity starts at 500 ms; easy starts at 800 ms and hard at 250 ms.
-- Every 10 cleared lines reduces gravity delay to 80% of the previous level,
-  with a minimum delay of 50 ms.
+- Gravity starts at 800 / 500 / 250 ms for easy / medium / hard. Every 10 cleared
+  lines reduces the delay to 80% of the previous level, with a 50 ms minimum.
 - Pieces are dealt from shuffled seven-piece bags, keeping each seven-piece cycle
-  balanced.
+  balanced. All players in a room receive the same sequence for each round.
 
 ## Socket.IO protocol
 
@@ -221,8 +233,9 @@ creating a duplicate.
 | Hard drop | Space |
 | Hold | C or Shift |
 
-The left and right controls repeat while held. Soft drop stops when the key is
-released or the browser window loses focus.
+Left and right use a 170 ms delayed auto-shift followed by 60 ms repeat
+intervals. Soft drop stops when the key is released or the browser window loses
+focus.
 
 ## Setup
 
